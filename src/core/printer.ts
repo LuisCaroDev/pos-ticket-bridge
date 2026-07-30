@@ -1,18 +1,9 @@
-/* eslint-disable @typescript-eslint/no-var-requires, no-useless-escape */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+/* eslint-disable @typescript-eslint/no-var-requires */
 import type { PrintJob, Printer } from "./types";
-const exec = promisify(execFile);
+import { createUsbAdapter } from "./transports/usb";
 const escpos: any = require("@node-escpos/core");
 const NetworkAdapter: any = require("@node-escpos/network-adapter");
 const SerialAdapter: any = require("@node-escpos/serialport-adapter");
-const { Adapter }: any = require("@node-escpos/adapter");
-const { usb }: any = require("usb");
-const hex = (value: unknown) =>
-  Number.parseInt(String(value || "").replace(/^0x/i, ""), 16);
 type Hooks = {
   onEvent?: (stage: string, detail?: Record<string, unknown>) => void;
 };
@@ -21,156 +12,6 @@ const emit = (
   stage: string,
   detail: Record<string, unknown> = {},
 ) => hooks.onEvent?.(stage, detail);
-
-async function rawWindowsPrint(printerName: string, data: Buffer) {
-  if (process.platform !== "win32")
-    throw new Error(
-      "El spooler de Windows no está disponible en esta plataforma",
-    );
-  const temp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pos-ticket-"));
-  const bytes = path.join(temp, "job.bin");
-  const script = path.join(temp, "raw.ps1");
-  const source = `param([string]$Name,[string]$Data)\nAdd-Type -TypeDefinition @"\nusing System; using System.Runtime.InteropServices; public class Raw { [DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool OpenPrinter(string n,out IntPtr h,IntPtr d); [DllImport(\"winspool.drv\",SetLastError=true)] public static extern bool ClosePrinter(IntPtr h); [DllImport(\"winspool.drv\",SetLastError=true,CharSet=CharSet.Ansi)] public static extern bool StartDocPrinter(IntPtr h,int l,IntPtr d); [DllImport(\"winspool.drv\",SetLastError=true)] public static extern bool EndDocPrinter(IntPtr h); [DllImport(\"winspool.drv\",SetLastError=true)] public static extern bool StartPagePrinter(IntPtr h); [DllImport(\"winspool.drv\",SetLastError=true)] public static extern bool EndPagePrinter(IntPtr h); [DllImport(\"winspool.drv\",SetLastError=true)] public static extern bool WritePrinter(IntPtr h,byte[] b,int c,out int w); public static void Send(string n,string p){ IntPtr h; if(!OpenPrinter(n,out h,IntPtr.Zero)) throw new Exception(\"No se pudo abrir la impresora\"); try { if(!StartDocPrinter(h,1,IntPtr.Zero)) throw new Exception(\"No se pudo iniciar el trabajo\"); StartPagePrinter(h); byte[] b=System.IO.File.ReadAllBytes(p); int w; if(!WritePrinter(h,b,b.Length,out w)||w!=b.Length) throw new Exception(\"No se enviaron todos los bytes\"); EndPagePrinter(h); EndDocPrinter(h); } finally { ClosePrinter(h); } } }\n"@\n[Raw]::Send($Name,$Data)`;
-  try {
-    await fs.promises.writeFile(bytes, data);
-    await fs.promises.writeFile(script, source, "utf8");
-    await exec("powershell", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      script,
-      "-Name",
-      printerName,
-      "-Data",
-      bytes,
-    ]);
-  } finally {
-    await fs.promises.rm(temp, { recursive: true, force: true });
-  }
-}
-
-class WindowsSpoolerAdapter extends Adapter {
-  constructor(private readonly printerName: string) {
-    super();
-  }
-  async open(callback?: (error?: Error | null) => void) {
-    try {
-      this.emit("connect", this.printerName);
-      callback?.(null);
-    } catch (error) {
-      callback?.(error as Error);
-    }
-    return this;
-  }
-  write(data: Buffer, callback?: (error?: Error | null) => void) {
-    rawWindowsPrint(this.printerName, Buffer.from(data))
-      .then(() => {
-        this.emit("data", data);
-        callback?.(null);
-      })
-      .catch((error) => callback?.(error));
-    return this;
-  }
-  close(callback?: (error?: Error | null) => void) {
-    this.emit("close");
-    callback?.(null);
-    return this;
-  }
-}
-
-class UsbAdapter extends Adapter {
-  private device: any;
-  private interfaceNumber?: number;
-  private endpointNumber?: number;
-  constructor(
-    private readonly vendorId: number,
-    private readonly productId: number,
-  ) {
-    super();
-  }
-  open(callback?: (error?: Error | null) => void) {
-    void this.connect(callback);
-    return this;
-  }
-  private async connect(callback?: (error?: Error | null) => void) {
-    try {
-      this.device = await usb.findDeviceByIds(this.vendorId, this.productId);
-      if (!this.device)
-        throw new Error(
-          `No se encontró el dispositivo USB ${this.vendorId.toString(16)}:${this.productId.toString(16)}`,
-        );
-      await this.device.open();
-      const usbInterface = this.device.configurations
-        .flatMap((configuration: any) => configuration.interfaces)
-        .find(
-          (item: any) =>
-            item.alternate?.interfaceClass === 7 ||
-            item.alternates?.some(
-              (alternate: any) => alternate.interfaceClass === 7,
-            ),
-        );
-      const alternate =
-        usbInterface?.alternate?.interfaceClass === 7
-          ? usbInterface.alternate
-          : usbInterface?.alternates?.find(
-              (item: any) => item.interfaceClass === 7,
-            );
-      const endpoint = alternate?.endpoints?.find(
-        (item: any) => item.direction === "out",
-      );
-      if (!usbInterface || !endpoint)
-        throw new Error(
-          "El dispositivo USB no expone una interfaz de impresión compatible",
-        );
-      this.interfaceNumber = usbInterface.interfaceNumber;
-      this.endpointNumber = endpoint.endpointNumber;
-      await this.device.claimInterface(this.interfaceNumber);
-      this.emit("connect", this.device);
-      callback?.(null);
-    } catch (error) {
-      await this.device?.close().catch(() => undefined);
-      callback?.(error as Error);
-    }
-  }
-  write(data: Buffer, callback?: (error?: Error | null) => void) {
-    void this.transfer(Buffer.from(data), callback);
-    return this;
-  }
-  private async transfer(
-    data: Buffer,
-    callback?: (error?: Error | null) => void,
-  ) {
-    try {
-      if (!this.device || this.endpointNumber === undefined)
-        throw new Error("La impresora USB no está conectada");
-      await this.device.nativeTransferOut(
-        this.endpointNumber,
-        5000,
-        new Uint8Array(data),
-      );
-      this.emit("data", data);
-      callback?.(null);
-    } catch (error) {
-      callback?.(error as Error);
-    }
-  }
-  close(callback?: (error?: Error | null) => void) {
-    void this.disconnect(callback);
-    return this;
-  }
-  private async disconnect(callback?: (error?: Error | null) => void) {
-    try {
-      if (this.device && this.interfaceNumber !== undefined)
-        await this.device.releaseInterface(this.interfaceNumber);
-      await this.device?.close();
-      this.emit("close");
-      callback?.(null);
-    } catch (error) {
-      callback?.(error as Error);
-    }
-  }
-}
 
 async function adapter(printer: Printer, hooks: Hooks) {
   if (printer.tipo === "network") {
@@ -190,20 +31,7 @@ async function adapter(printer: Printer, hooks: Hooks) {
       baudRate: Number(printer.connection.baudRate) || 9600,
     });
   }
-  if (process.platform === "win32" && printer.connection.systemPrinter) {
-    emit(hooks, "adapter_prepare", { transport: "windows-spooler" });
-    return new WindowsSpoolerAdapter(String(printer.connection.systemPrinter));
-  }
-  const vendorId = hex(printer.connection.vendorId);
-  const productId = hex(printer.connection.productId);
-  if (!vendorId || !productId)
-    throw new Error(`Impresora USB ${printer.id}: falta vendorId y productId`);
-  emit(hooks, "adapter_prepare", {
-    transport: "usb",
-    vendorId: printer.connection.vendorId,
-    productId: printer.connection.productId,
-  });
-  return new UsbAdapter(vendorId, productId);
+  return createUsbAdapter(printer, hooks);
 }
 const align = (printer: any, value: unknown) =>
   printer.align(value === "center" ? "ct" : value === "right" ? "rt" : "lt");

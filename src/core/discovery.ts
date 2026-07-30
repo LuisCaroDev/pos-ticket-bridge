@@ -56,80 +56,52 @@ export async function discoverNetwork() {
     notes: [`Hosts escaneados en puerto 9100: ${candidates.length}.`],
   };
 }
-const isUsbPrinter = (device: any) =>
-  device.deviceClass === 7 ||
-  device.configurations?.some((configuration: any) =>
-    configuration.interfaces?.some(
-      (iface: any) =>
-        iface.alternate?.interfaceClass === 7 ||
-        iface.alternates?.some(
-          (alternate: any) => alternate.interfaceClass === 7,
-        ),
-    ),
-  );
-const usbString = (
-  device: any,
-  property: "productName" | "manufacturerName" | "serialNumber",
-) => {
+export async function discoverUsb() {
+  if (process.platform !== "win32")
+    return {
+      items: [],
+      notes: ["La impresión USB mediante Windows solo está disponible en Windows."],
+    };
   try {
-    return device[property] || "";
-  } catch {
-    return "";
-  }
-};
-async function windowsPrinterName(vendorId: number, productId: number) {
-  if (process.platform !== "win32") return "";
-  const vid = vendorId.toString(16).padStart(4, "0");
-  const pid = productId.toString(16).padStart(4, "0");
-  const script = `$device = Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match 'VID_${vid}.*PID_${pid}' } | Select-Object -First 1; if ($device) { $usbPrint = Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like 'USBPRINT\\*' -and $_.FriendlyName -eq $device.FriendlyName } | Select-Object -First 1; if ($usbPrint) { $port = [regex]::Match($usbPrint.InstanceId, 'USB\\d+$').Value; if ($port) { Get-CimInstance Win32_Printer | Where-Object { $_.PortName -eq $port } | Select-Object -First 1 -ExpandProperty Name } } }`;
-  try {
+    const script =
+      "Get-CimInstance Win32_Printer | Where-Object { $_.PortName -match '^USB\\d+$' } | Select-Object Name,PortName | ConvertTo-Json -Compress";
     const { stdout } = await exec(
       "powershell",
       ["-NoProfile", "-Command", script],
       { windowsHide: true },
     );
-    return stdout.trim();
-  } catch {
-    return "";
-  }
-}
-export async function discoverUsb() {
-  try {
-    const { usb } = require("usb");
-    const devices = (await usb.getDevices()).filter(isUsbPrinter);
-    const items = await Promise.all(
-      devices.map(async (device: any, index: number) => ({
+    const result = stdout.trim()
+      ? (JSON.parse(stdout) as
+          | { Name: string; PortName: string }
+          | Array<{ Name: string; PortName: string }>)
+      : [];
+    const printers = Array.isArray(result) ? result : [result];
+    const items: Printer[] = printers.map((printer) => ({
         id: "",
-        nombre:
-          usbString(device, "productName") ||
-          usbString(device, "manufacturerName") ||
-          `Impresora USB ${index + 1}`,
+        nombre: printer.Name,
         tipo: "usb" as const,
         anchoMm: 80 as const,
         codepage: "CP850",
         abreCajon: false,
         enabled: true,
         connection: {
-          vendorId: `0x${device.vendorId.toString(16)}`,
-          productId: `0x${device.productId.toString(16)}`,
-          serialNumber: usbString(device, "serialNumber"),
-          systemPrinter: await windowsPrinterName(
-            device.vendorId,
-            device.productId,
-          ),
+          systemPrinter: printer.Name,
+          port: printer.PortName,
         },
-      })),
-    );
+      }));
     return {
       items,
-      notes: devices.length
+      notes: items.length
         ? []
-        : ["No se detectaron dispositivos USB de clase impresora."],
+        : ["No se detectaron impresoras USB instaladas en Windows."],
     };
   } catch (error) {
     return {
       items: [],
-      notes: [(error as Error).message || "USB no disponible"],
+      notes: [
+        (error as Error).message ||
+          "No se pudo consultar las impresoras USB de Windows",
+      ],
     };
   }
 }
@@ -190,16 +162,21 @@ export async function checkConnection(printer: Printer) {
         : "No se detecta el puerto configurado",
     };
   }
+  const systemPrinter = String(printer.connection.systemPrinter || "").trim();
+  if (!systemPrinter)
+    return {
+      ok: false,
+      state: "offline",
+      message: "Configura una impresora instalada en Windows para usar USB.",
+    };
   const found = (await discoverUsb()).items.some(
-    (item) =>
-      item.connection.vendorId === printer.connection.vendorId &&
-      item.connection.productId === printer.connection.productId,
+    (item) => item.connection.systemPrinter === systemPrinter,
   );
   return {
     ok: found,
     state: found ? "ready" : "offline",
     message: found
-      ? "Dispositivo USB detectado"
-      : "No se detecta el dispositivo USB configurado",
+      ? "Impresora USB detectada por Windows"
+      : "Windows no detecta la impresora USB configurada",
   };
 }

@@ -28,6 +28,26 @@ describe("POS Ticket Bridge", () => {
     expect(store.get().token).toHaveLength(48);
   });
 
+  it("stores USB printers by their Windows print queue", () => {
+    const { store } = fixture();
+    store.create({
+      nombre: "Ticket caja",
+      tipo: "usb",
+      connection: {
+        vendorId: "0x1fc9",
+        productId: "0x2016",
+        systemPrinter: "POS-80",
+        port: "USB001",
+      },
+    });
+    expect(store.get().printers[0].connection).toEqual({
+      systemPrinter: "POS-80",
+      port: "USB001",
+      vendorId: "0x1fc9",
+      productId: "0x2016",
+    });
+  });
+
   it("serves health, creates printers and rejects an invalid print token", async () => {
     const { bridge } = fixture();
     const health = await bridge.app.inject({ method: "GET", url: "/health" });

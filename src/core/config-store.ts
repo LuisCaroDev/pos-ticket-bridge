@@ -130,7 +130,14 @@ export class ConfigStore {
               baudRate: Number(merged.connection.baudRate) || 9600,
               channel: String(merged.connection.channel || ""),
             }
-          : merged.connection;
+          : {
+              systemPrinter: String(
+                merged.connection.systemPrinter || "",
+              ).trim(),
+              port: String(merged.connection.port || "").trim(),
+              vendorId: String(merged.connection.vendorId || "").trim(),
+              productId: String(merged.connection.productId || "").trim(),
+            };
     return {
       ...merged,
       id: slug(merged.id || merged.nombre || "printer"),
