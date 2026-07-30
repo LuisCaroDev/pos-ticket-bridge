@@ -1,12 +1,29 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
+import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     asarUnpack: ["**/*.node"],
+    // Vite solo incluye `.vite` por defecto. Las dependencias externalizadas del
+    // proceso principal deben viajar junto con la app para resolverse en runtime.
+    ignore: (file) => {
+      if (!file) return false;
+
+      return (
+        !file.startsWith("/.vite") &&
+        !file.startsWith("/node_modules") &&
+        file !== "/package.json"
+      );
+    },
+    // En Windows reutilizamos el runtime ya instalado por npm. Esto evita que el
+    // empaquetado dependa de descargar Electron otra vez.
+    ...(process.platform === "win32"
+      ? { electronZipDir: ".electron-cache" }
+      : {}),
     appBundleId: "com.pos.ticketbridge",
     appCategoryType: "public.app-category.utilities",
   },
@@ -31,6 +48,7 @@ const config: ForgeConfig = {
     { name: "@electron-forge/maker-deb", platforms: ["linux"] },
   ],
   plugins: [
+    new AutoUnpackNativesPlugin({}),
     new VitePlugin({
       // `build` can specify multiple entry builds, which can be Main process, Preload scripts, Worker process, etc.
       // If you are familiar with Vite configuration, it will look really familiar.
