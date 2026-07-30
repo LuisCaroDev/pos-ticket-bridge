@@ -50,6 +50,7 @@ export function createBridgeServer(store: ConfigStore) {
     ok: true,
     version: "1.0.0",
     port: store.get().port,
+    allowedOrigins: store.get().allowedOrigins,
     configPath: store.path(),
     token: store.get().token,
     suggestedHosts: suggestedHosts(store.get().port),

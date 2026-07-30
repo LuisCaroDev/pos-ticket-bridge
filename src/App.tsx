@@ -84,6 +84,7 @@ export function App() {
   const [port, setPort] = useState("9977");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const scanInFlight = useRef(false);
+  const isWindows = window.bridge.platform === "win32";
 
   const refresh = async () => {
     try {
@@ -601,16 +602,42 @@ export function App() {
                 )}
                 {form.tipo === "usb" && (
                   <>
-                    <label className="grid gap-1 text-sm font-medium md:col-span-2">
-                      Impresora instalada en Windows
-                      <Input
-                        placeholder="Nombre exacto de la impresora en Windows"
-                        value={String(form.connection.systemPrinter || "")}
-                        onChange={(event) =>
-                          setConnection("systemPrinter", event.target.value)
-                        }
-                      />
-                    </label>
+                    {!isWindows && (
+                      <>
+                        <label className="grid gap-1 text-sm font-medium">
+                          Vendor ID
+                          <Input
+                            placeholder="0x04b8"
+                            value={String(form.connection.vendorId || "")}
+                            onChange={(event) =>
+                              setConnection("vendorId", event.target.value)
+                            }
+                          />
+                        </label>
+                        <label className="grid gap-1 text-sm font-medium">
+                          Product ID
+                          <Input
+                            placeholder="0x0202"
+                            value={String(form.connection.productId || "")}
+                            onChange={(event) =>
+                              setConnection("productId", event.target.value)
+                            }
+                          />
+                        </label>
+                      </>
+                    )}
+                    {isWindows && (
+                      <label className="grid gap-1 text-sm font-medium md:col-span-2">
+                        Impresora instalada en Windows
+                        <Input
+                          placeholder="Nombre exacto de la impresora en Windows"
+                          value={String(form.connection.systemPrinter || "")}
+                          onChange={(event) =>
+                            setConnection("systemPrinter", event.target.value)
+                          }
+                        />
+                      </label>
+                    )}
                   </>
                 )}
                 {form.tipo === "bluetooth" && (

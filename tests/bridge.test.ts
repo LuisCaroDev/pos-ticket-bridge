@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigStore } from "../src/core/config-store";
+import { discoverUsb } from "../src/core/discovery";
 import { createBridgeServer } from "../src/core/server";
 
 const dirs: string[] = [];
@@ -26,6 +27,29 @@ describe("POS Ticket Bridge", () => {
       allowedOrigins: [],
     });
     expect(store.get().token).toHaveLength(48);
+  });
+
+  it("exposes advanced settings in the status used by the app", async () => {
+    const { store, bridge } = fixture();
+
+    store.settings({
+      port: 9988,
+      allowedOrigins: [" https://pos.ejemplo.com ", ""],
+    });
+
+    await expect(bridge.status()).resolves.toMatchObject({
+      port: 9988,
+      allowedOrigins: ["https://pos.ejemplo.com"],
+    });
+  });
+
+  it("does not use the Windows-only USB message on macOS", async () => {
+    if (process.platform !== "darwin") return;
+
+    const result = await discoverUsb();
+    expect(result.notes.join(" ")).not.toContain(
+      "solo está disponible en Windows",
+    );
   });
 
   it("stores USB printers by their Windows print queue", () => {

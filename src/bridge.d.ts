@@ -2,6 +2,7 @@ export {};
 declare global {
   interface Window {
     bridge: {
+      platform: string;
       status(): Promise<any>;
       settings(input: any): Promise<any>;
       createPrinter(input: any): Promise<any>;

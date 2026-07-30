@@ -56,11 +56,69 @@ export async function discoverNetwork() {
     notes: [`Hosts escaneados en puerto 9100: ${candidates.length}.`],
   };
 }
+const isUsbPrinter = (device: any) =>
+  device.deviceClass === 7 ||
+  device.configurations?.some((configuration: any) =>
+    configuration.interfaces?.some(
+      (iface: any) =>
+        iface.alternate?.interfaceClass === 7 ||
+        iface.alternates?.some(
+          (alternate: any) => alternate.interfaceClass === 7,
+        ),
+    ),
+  );
+const usbString = (
+  device: any,
+  property: "productName" | "manufacturerName" | "serialNumber",
+) => {
+  try {
+    return device[property] || "";
+  } catch {
+    return "";
+  }
+};
+async function discoverMacUsb() {
+  try {
+    const { usb } = require("usb");
+    const devices = (await usb.getDevices()).filter(isUsbPrinter);
+    const items = devices.map((device: any, index: number) => ({
+      id: "",
+      nombre:
+        usbString(device, "productName") ||
+        usbString(device, "manufacturerName") ||
+        `Impresora USB ${index + 1}`,
+      tipo: "usb" as const,
+      anchoMm: 80 as const,
+      codepage: "CP850",
+      abreCajon: false,
+      enabled: true,
+      connection: {
+        vendorId: `0x${device.vendorId.toString(16)}`,
+        productId: `0x${device.productId.toString(16)}`,
+        serialNumber: usbString(device, "serialNumber"),
+      },
+    }));
+    return {
+      items,
+      notes: devices.length
+        ? []
+        : ["No se detectaron dispositivos USB de clase impresora."],
+    };
+  } catch (error) {
+    return {
+      items: [],
+      notes: [(error as Error).message || "USB no disponible en macOS"],
+    };
+  }
+}
 export async function discoverUsb() {
+  if (process.platform === "darwin") return discoverMacUsb();
   if (process.platform !== "win32")
     return {
       items: [],
-      notes: ["La impresión USB mediante Windows solo está disponible en Windows."],
+      notes: [
+        "La detección USB del sistema solo está disponible en Windows y macOS.",
+      ],
     };
   try {
     const script =
@@ -160,6 +218,20 @@ export async function checkConnection(printer: Printer) {
       message: found
         ? "Puerto serial detectado; valida con ticket de prueba."
         : "No se detecta el puerto configurado",
+    };
+  }
+  if (process.platform === "darwin") {
+    const found = (await discoverUsb()).items.some(
+      (item) =>
+        item.connection.vendorId === printer.connection.vendorId &&
+        item.connection.productId === printer.connection.productId,
+    );
+    return {
+      ok: found,
+      state: found ? "ready" : "offline",
+      message: found
+        ? "Dispositivo USB detectado en macOS"
+        : "No se detecta el dispositivo USB configurado en macOS",
     };
   }
   const systemPrinter = String(printer.connection.systemPrinter || "").trim();

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("bridge", {
+  platform: process.platform,
   status: () => ipcRenderer.invoke("bridge:status"),
   settings: (input: unknown) => ipcRenderer.invoke("bridge:settings", input),
   createPrinter: (input: unknown) =>
