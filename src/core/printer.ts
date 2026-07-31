@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
+import { BridgeError, type TestPrintTexts } from "../i18n";
 import type { PrintJob, Printer } from "./types";
 import { createUsbAdapter } from "./transports/usb";
 const escpos: any = require("@node-escpos/core");
@@ -38,18 +39,22 @@ const align = (printer: any, value: unknown) =>
 async function loadImage(source: string) {
   if (source.startsWith("data:")) {
     const match = source.match(/^data:([^;,]+);base64,(.+)$/);
-    if (!match) throw new Error("Formato de imagen data URL no soportado");
+    if (!match) throw new BridgeError("invalid_request");
     return escpos.Image.load(Buffer.from(match[2], "base64"), match[1]);
   }
   const response = await fetch(source);
-  if (!response.ok)
-    throw new Error(`No se pudo descargar la imagen: HTTP ${response.status}`);
+  if (!response.ok) throw new BridgeError("operation_failed");
   return escpos.Image.load(
     new Uint8Array(await response.arrayBuffer()),
     response.headers.get("content-type") || undefined,
   );
 }
-async function render(printer: any, job: PrintJob, hooks: Hooks) {
+async function render(
+  printer: any,
+  job: PrintJob,
+  hooks: Hooks,
+  imageOmitted?: string,
+) {
   for (const block of job.blocks || []) {
     const value: any = block;
     switch (block.type) {
@@ -114,11 +119,11 @@ async function render(printer: any, job: PrintJob, hooks: Hooks) {
           );
         } catch (error) {
           emit(hooks, "image_omitted", { error: (error as Error).message });
-          printer.println("[Imagen omitida]");
+          if (imageOmitted) printer.println(imageOmitted);
         }
         break;
       default:
-        throw new Error(`Bloque de impresión no soportado: ${block.type}`);
+        throw new BridgeError("unsupported_print_block", { type: block.type });
     }
   }
 }
@@ -146,7 +151,13 @@ export const printJob = (
   definition: Printer,
   job: PrintJob,
   hooks: Hooks = {},
-) => withPrinter(definition, (printer) => render(printer, job, hooks), hooks);
+  imageOmitted?: string,
+) =>
+  withPrinter(
+    definition,
+    (printer) => render(printer, job, hooks, imageOmitted),
+    hooks,
+  );
 export const openDrawer = (definition: Printer, hooks: Hooks = {}) =>
   withPrinter(
     definition,
@@ -156,7 +167,11 @@ export const openDrawer = (definition: Printer, hooks: Hooks = {}) =>
     },
     hooks,
   );
-export const testPrint = (definition: Printer, hooks: Hooks = {}) =>
+export const testPrint = (
+  definition: Printer,
+  texts: TestPrintTexts,
+  hooks: Hooks = {},
+) =>
   printJob(
     definition,
     {
@@ -166,18 +181,19 @@ export const testPrint = (definition: Printer, hooks: Hooks = {}) =>
       blocks: [
         {
           type: "text",
-          content: "POS TICKET BRIDGE",
+          content: texts.title,
           align: "center",
           bold: true,
           size: 2,
         },
-        { type: "text", content: "Prueba de impresión", align: "center" },
+        { type: "text", content: texts.subtitle, align: "center" },
         { type: "separator", style: "solid" },
-        { type: "text", content: `Impresora: ${definition.nombre}` },
+        { type: "text", content: texts.printer },
         { type: "text", content: new Date().toLocaleString() },
         { type: "feed", lines: 3 },
         { type: "cut" },
       ],
     },
     hooks,
+    texts.imageOmitted,
   );

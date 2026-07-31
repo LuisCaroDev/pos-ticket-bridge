@@ -10,6 +10,7 @@ import {
 } from "electron";
 import path from "node:path";
 import started from "electron-squirrel-startup";
+import { errorPayload, resolveLanguage, t, testPrintTexts } from "./i18n";
 import { ConfigStore } from "./core/config-store";
 import {
   discoverBluetooth,
@@ -23,6 +24,8 @@ let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let bridge: ReturnType<typeof createBridgeServer>;
+const activeLanguage = () =>
+  resolveLanguage(bridge.store.get().language, app.getLocale());
 const icon = () =>
   nativeImage.createFromDataURL(
     "data:image/svg+xml;base64," +
@@ -73,6 +76,7 @@ async function restartBridge() {
   await bridge?.stop().catch(() => undefined);
   bridge = createBridgeServer(
     new ConfigStore(path.join(app.getPath("userData"), "config.json")),
+    activeLanguage,
   );
   await bridge.start();
   buildTray();
@@ -83,21 +87,22 @@ function buildTray() {
     tray.on("double-click", showWindow);
   }
   const config = bridge.store.get();
+  const language = activeLanguage();
   tray.setToolTip("POS Ticket Bridge");
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Abrir POS Ticket Bridge", click: showWindow },
-      { label: "Copiar token", click: () => clipboard.writeText(config.token) },
+      { label: t(language, "tray_open"), click: showWindow },
+      { label: t(language, "tray_copy_token"), click: () => clipboard.writeText(config.token) },
       {
-        label: "Mostrar hosts",
+        label: t(language, "tray_show_hosts"),
         click: async () =>
           dialog.showMessageBox({
-            title: "Hosts del puente",
+            title: t(language, "bridge_hosts"),
             message: (await bridge.status()).suggestedHosts.join("\n"),
           }),
       },
       {
-        label: "Imprimir prueba",
+        label: t(language, "tray_print_test"),
         enabled: config.printers.length > 0,
         click: async () => {
           const first = config.printers[0];
@@ -108,21 +113,24 @@ function buildTray() {
             });
           } catch (error) {
             dialog.showErrorBox(
-              "No se pudo imprimir",
-              (error as Error).message,
+              t(language, "print_failed"),
+              t(language, errorPayload(error).code as any, errorPayload(error).params),
             );
           }
         },
       },
       {
-        label: "Reiniciar servicio",
+        label: t(language, "tray_restart"),
         click: () =>
           restartBridge().catch((error) =>
-            dialog.showErrorBox("Error", error.message),
+            dialog.showErrorBox(
+              t(activeLanguage(), "operation_failed"),
+              t(activeLanguage(), errorPayload(error).code as any, errorPayload(error).params),
+            ),
           ),
       },
       { type: "separator" },
-      { label: "Salir", click: () => quit() },
+      { label: t(language, "tray_quit"), click: () => quit() },
     ]),
   );
 }
@@ -133,36 +141,46 @@ async function quit() {
   app.quit();
 }
 function registerIpc() {
-  ipcMain.handle("bridge:status", async () => ({
+  const ipc = (channel: string, handler: (...args: any[]) => Promise<any> | any) =>
+    ipcMain.handle(channel, async (...args) => {
+      try {
+        return { ok: true, value: await handler(...args) };
+      } catch (error) {
+        return { ok: false, error: errorPayload(error) };
+      }
+    });
+  ipc("bridge:status", async () => ({
     ...(await bridge.status()),
     version: app.getVersion(),
   }));
-  ipcMain.handle("bridge:settings", async (_event, input) => {
+  ipc("bridge:settings", async (_event, input) => {
     const oldPort = bridge.store.get().port;
+    const oldLanguage = bridge.store.get().language;
     const config = bridge.store.settings(input);
     if (oldPort !== config.port) await restartBridge();
+    else if (oldLanguage !== config.language) buildTray();
     return config;
   });
-  ipcMain.handle("bridge:create-printer", (_event, input) =>
+  ipc("bridge:create-printer", (_event, input) =>
     bridge.store.create(input),
   );
-  ipcMain.handle("bridge:update-printer", (_event, id, input) =>
+  ipc("bridge:update-printer", (_event, id, input) =>
     bridge.store.update(id, input),
   );
-  ipcMain.handle("bridge:delete-printer", (_event, id) =>
+  ipc("bridge:delete-printer", (_event, id) =>
     bridge.store.remove(id),
   );
-  ipcMain.handle("bridge:duplicate-printer", (_event, id) =>
+  ipc("bridge:duplicate-printer", (_event, id) =>
     bridge.store.duplicate(id),
   );
-  ipcMain.handle("bridge:discover", (_event, kind) =>
+  ipc("bridge:discover", (_event, kind) =>
     kind === "network"
       ? discoverNetwork()
       : kind === "usb"
         ? discoverUsb()
         : discoverBluetooth(),
   );
-  ipcMain.handle(
+  ipc(
     "bridge:request",
     async (_event, route: string, method = "POST", body?: unknown) => {
       const config = bridge.store.get();
@@ -174,15 +192,17 @@ function registerIpc() {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
       const payload = await response.json();
-      if (!response.ok)
-        throw new Error(payload.error || `HTTP ${response.status}`);
+      if (!response.ok) throw payload.error || { code: "operation_failed" };
       return payload;
     },
   );
-  ipcMain.handle("bridge:test-printer", async (_event, input) =>
-    testPrint({ ...input, id: input.id || "test-printer" }),
+  ipc("bridge:test-printer", async (_event, input) =>
+    testPrint(
+      { ...input, id: input.id || "test-printer" },
+      testPrintTexts(activeLanguage(), input.nombre || ""),
+    ),
   );
-  ipcMain.handle("bridge:copy", (_event, value: string) =>
+  ipc("bridge:copy", (_event, value: string) =>
     clipboard.writeText(value),
   );
 }
@@ -204,12 +224,17 @@ if (!isPrimaryInstance) {
         path.join(app.getPath("userData"), "config.json"),
       ).get().port;
       if (/EADDRINUSE|address already in use/i.test(message)) {
+        const language = resolveLanguage(
+          new ConfigStore(
+            path.join(app.getPath("userData"), "config.json"),
+          ).get().language,
+          app.getLocale(),
+        );
         await dialog.showMessageBox({
           type: "error",
-          title: "Puerto ocupado",
-          message: `El puerto ${port} ya está siendo usado por otra aplicación.`,
-          detail:
-            "Cierra la otra aplicación o cambia el puerto desde los ajustes de POS Ticket Bridge.",
+          title: t(language, "port_busy"),
+          message: t(language, "port_busy_message", { port }),
+          detail: t(language, "port_busy_detail"),
         });
       } else {
         dialog.showErrorBox("POS Ticket Bridge", message);

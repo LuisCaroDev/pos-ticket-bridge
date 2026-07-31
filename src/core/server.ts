@@ -1,6 +1,13 @@
-import Fastify from "fastify";
 import cors from "@fastify/cors";
+import Fastify from "fastify";
 import { z } from "zod";
+import {
+  errorPayload,
+  message,
+  resolveLanguage,
+  testPrintTexts,
+  type SupportedLanguage,
+} from "../i18n";
 import { ConfigStore, suggestedHosts } from "./config-store";
 import {
   checkConnection,
@@ -10,6 +17,7 @@ import {
 } from "./discovery";
 import { openDrawer, printJob, testPrint } from "./printer";
 import type { Diagnostic, Printer } from "./types";
+
 const printSchema = z.object({
   printerId: z.string().min(1),
   job: z.object({
@@ -24,13 +32,21 @@ const isLocal = (origin: unknown, port: number) =>
   !origin ||
   origin === `http://localhost:${port}` ||
   origin === `http://127.0.0.1:${port}`;
-export function createBridgeServer(store: ConfigStore) {
+
+export function createBridgeServer(
+  store: ConfigStore,
+  getActiveLanguage: () => SupportedLanguage = () =>
+    resolveLanguage(store.get().language),
+) {
   const app = Fastify({ logger: false });
   const diagnostics: Diagnostic[] = [];
   const lastTests = new Map<string, unknown>();
   const allowed = (origin: string | undefined) =>
     isLocal(origin, store.get().port) ||
     store.get().allowedOrigins.includes(origin || "");
+  const sendError = (reply: any, statusCode: number, error: unknown) =>
+    reply.code(statusCode).send({ ok: false, error: errorPayload(error) });
+
   app.register(cors, {
     origin: (origin, done) => done(null, allowed(origin)),
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -44,12 +60,17 @@ export function createBridgeServer(store: ConfigStore) {
     )
       return;
     if (request.headers["x-agent-token"] !== store.get().token)
-      return reply.code(401).send({ ok: false, error: "token invalido" });
+      return reply
+        .code(401)
+        .send({ ok: false, error: message("invalid_token") });
   });
+
   const status = async () => ({
     ok: true,
     version: "1.0.0",
     port: store.get().port,
+    language: store.get().language,
+    activeLanguage: getActiveLanguage(),
     allowedOrigins: store.get().allowedOrigins,
     configPath: store.path(),
     token: store.get().token,
@@ -90,9 +111,10 @@ export function createBridgeServer(store: ConfigStore) {
     try {
       await work(hooks);
       entry.ok = true;
-      entry.message = "Operación completada";
+      entry.message = message("operation_completed");
     } catch (error) {
-      entry.message = (error as Error).message;
+      entry.message = errorPayload(error);
+      entry.cause = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
       entry.finishedAt = new Date().toISOString();
@@ -101,6 +123,32 @@ export function createBridgeServer(store: ConfigStore) {
       diagnostics.splice(50);
     }
   };
+  const test = async (id: string) => {
+    const printer = store.find(id);
+    try {
+      await operation(printer, "test-print", (hooks) =>
+        testPrint(
+          printer,
+          testPrintTexts(getActiveLanguage(), printer.nombre),
+          hooks,
+        ),
+      );
+      lastTests.set(id, {
+        ok: true,
+        at: new Date().toISOString(),
+        message: message("test_sent"),
+      });
+      return { ok: true };
+    } catch (error) {
+      lastTests.set(id, {
+        ok: false,
+        at: new Date().toISOString(),
+        message: errorPayload(error),
+      });
+      throw error;
+    }
+  };
+
   app.get("/health", async () => ({
     ok: true,
     version: "1.0.0",
@@ -122,18 +170,14 @@ export function createBridgeServer(store: ConfigStore) {
     try {
       return { ok: true, config: store.settings(request.body || {}) };
     } catch (error) {
-      return reply
-        .code(400)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 400, error);
     }
   });
   app.post("/api/printers", async (request: any, reply) => {
     try {
       return { ok: true, config: store.create(request.body || {}) };
     } catch (error) {
-      return reply
-        .code(400)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 400, error);
     }
   });
   app.put("/api/printers/:id", async (request: any, reply) => {
@@ -143,24 +187,23 @@ export function createBridgeServer(store: ConfigStore) {
         config: store.update(request.params.id, request.body || {}),
       };
     } catch (error) {
-      return reply
-        .code(400)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 400, error);
     }
   });
   app.delete("/api/printers/:id", async (request: any, reply) => {
     try {
       return { ok: true, ...store.remove(request.params.id) };
     } catch (error) {
-      return reply
-        .code(400)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 400, error);
     }
   });
-  app.post("/api/printers/:id/duplicate", async (request: any) => ({
-    ok: true,
-    config: store.duplicate(request.params.id),
-  }));
+  app.post("/api/printers/:id/duplicate", async (request: any, reply) => {
+    try {
+      return { ok: true, config: store.duplicate(request.params.id) };
+    } catch (error) {
+      return sendError(reply, 400, error);
+    }
+  });
   app.post("/api/printers/discover/network", async () => ({
     ok: true,
     ...(await discoverNetwork()),
@@ -173,34 +216,11 @@ export function createBridgeServer(store: ConfigStore) {
     ok: true,
     ...(await discoverBluetooth()),
   }));
-  const test = async (id: string) => {
-    const printer = store.find(id);
-    try {
-      await operation(printer, "test-print", (hooks) =>
-        testPrint(printer, hooks),
-      );
-      lastTests.set(id, {
-        ok: true,
-        at: new Date().toISOString(),
-        message: "Prueba enviada correctamente",
-      });
-      return { ok: true };
-    } catch (error) {
-      lastTests.set(id, {
-        ok: false,
-        at: new Date().toISOString(),
-        message: (error as Error).message,
-      });
-      throw error;
-    }
-  };
   app.post("/api/printers/:id/test", async (request: any, reply) => {
     try {
       return await test(request.params.id);
     } catch (error) {
-      return reply
-        .code(500)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 500, error);
     }
   });
   app.post("/api/printers/:id/open-drawer", async (request: any, reply) => {
@@ -211,15 +231,13 @@ export function createBridgeServer(store: ConfigStore) {
       );
       return { ok: true };
     } catch (error) {
-      return reply
-        .code(500)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 500, error);
     }
   });
   app.post("/print", async (request: any, reply) => {
     const parsed = printSchema.safeParse(request.body);
     if (!parsed.success)
-      return reply.code(400).send({ ok: false, error: parsed.error.message });
+      return sendError(reply, 400, { code: "invalid_request" });
     try {
       const printer = store.find(parsed.data.printerId);
       await operation(printer, "print-job", (hooks) =>
@@ -227,9 +245,7 @@ export function createBridgeServer(store: ConfigStore) {
       );
       return { ok: true };
     } catch (error) {
-      return reply
-        .code(500)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 500, error);
     }
   });
   app.post("/open-drawer", async (request: any, reply) => {
@@ -240,27 +256,21 @@ export function createBridgeServer(store: ConfigStore) {
       );
       return { ok: true };
     } catch (error) {
-      return reply
-        .code(500)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 500, error);
     }
   });
   app.post("/test/:printerId", async (request: any, reply) => {
     try {
       return await test(request.params.printerId);
     } catch (error) {
-      return reply
-        .code(500)
-        .send({ ok: false, error: (error as Error).message });
+      return sendError(reply, 500, error);
     }
   });
   return {
     app,
     store,
     status,
-    start: async () => {
-      await app.listen({ port: store.get().port, host: "0.0.0.0" });
-    },
+    start: async () => app.listen({ port: store.get().port, host: "0.0.0.0" }),
     stop: () => app.close(),
   };
 }

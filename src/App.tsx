@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  t,
+  translateMessage,
+  type BridgeMessage,
+  type LanguageSetting,
+  type SupportedLanguage,
+  type TranslationKey,
+} from "./i18n";
+import {
   Banknote,
   CheckCircle2,
   Clipboard,
@@ -82,9 +90,24 @@ export function App() {
   const [notice, setNotice] = useState("");
   const [origins, setOrigins] = useState("");
   const [port, setPort] = useState("9977");
+  const [languageSetting, setLanguageSetting] =
+    useState<LanguageSetting>("system");
+  const [language, setLanguage] = useState<SupportedLanguage>("es");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const scanInFlight = useRef(false);
   const isWindows = window.bridge.platform === "win32";
+  const tr = (key: TranslationKey, params?: Record<string, string | number>) =>
+    t(language, key, params);
+  const errorMessage = (cause: unknown) => {
+    try {
+      return translateMessage(
+        language,
+        JSON.parse((cause as Error).message) as BridgeMessage,
+      );
+    } catch {
+      return tr("operation_failed");
+    }
+  };
 
   const refresh = async () => {
     try {
@@ -93,8 +116,10 @@ export function App() {
       setStatus(next);
       setPort(String(next.port));
       setOrigins((next.allowedOrigins || []).join("\n"));
+      setLanguageSetting(next.language || "system");
+      setLanguage(next.activeLanguage || "es");
     } catch (cause) {
-      setError((cause as Error).message);
+      setError(errorMessage(cause));
     }
   };
   useEffect(() => {
@@ -109,7 +134,7 @@ export function App() {
       await refresh();
       return true;
     } catch (cause) {
-      setError((cause as Error).message);
+      setError(errorMessage(cause));
       return false;
     } finally {
       setBusy("");
@@ -139,9 +164,7 @@ export function App() {
       form &&
       (await run("test-draft", () => window.bridge.testPrinter(form)))
     )
-      setNotice(
-        "Ticket de prueba enviado. Puedes guardar la impresora cuando estés conforme.",
-      );
+      setNotice(tr("test_sent"));
   };
   const discover = async (kind: "network" | "usb" | "bluetooth") => {
     if (scanInFlight.current) return;
@@ -160,6 +183,7 @@ export function App() {
           .split("\n")
           .map((value) => value.trim())
           .filter(Boolean),
+        language: languageSetting,
       }),
     );
   const changeType = (tipo: PrinterForm["tipo"]) =>
@@ -187,7 +211,7 @@ export function App() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-semibold">POS Ticket Bridge</h1>
-              <Badge variant="secondary">Activo</Badge>
+              <Badge variant="secondary">{tr("active")}</Badge>
               {appVersion && (
                 <span className="text-xs text-muted-foreground">
                   v{appVersion}
@@ -195,19 +219,19 @@ export function App() {
               )}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              Puente local de impresión para tu punto de venta.
+              {tr("app_description")}
             </p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => void refresh()}>
               <Radar data-icon="inline-start" />
-              Actualizar
+              {tr("refresh")}
             </Button>
             <Button
               size="icon"
               variant="outline"
-              aria-label="Abrir ajustes avanzados"
-              title="Ajustes avanzados"
+              aria-label={tr("advanced_settings")}
+              title={tr("advanced_settings")}
               onClick={() => setSettingsOpen(true)}
             >
               <Settings2 />
@@ -234,10 +258,10 @@ export function App() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Wifi className="size-4" />
-                  Host del puente
+                  {tr("bridge_host")}
                 </CardTitle>
                 <CardDescription>
-                  Configúralo en el POS que enviará los trabajos.
+                  {tr("bridge_host_description")}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex items-center justify-between gap-3">
@@ -252,7 +276,7 @@ export function App() {
                   }
                 >
                   <Clipboard data-icon="inline-start" />
-                  Copiar
+                  {tr("copy")}
                 </Button>
               </CardContent>
             </Card>
@@ -260,10 +284,10 @@ export function App() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Power className="size-4" />
-                  Token de acceso
+                  {tr("access_token")}
                 </CardTitle>
                 <CardDescription>
-                  Obligatorio para las solicitudes de impresión.
+                  {tr("access_token_description")}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex items-center justify-between gap-3">
@@ -293,19 +317,19 @@ export function App() {
                       Impresoras
                     </CardTitle>
                     <CardDescription>
-                      Conexiones configuradas en este equipo.
+                      {tr("printers_description")}
                     </CardDescription>
                   </div>
                   <Button onClick={openCreate}>
                     <Plus data-icon="inline-start" />
-                    Agregar
+                    {tr("add")}
                   </Button>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 {!status?.printers?.length && (
                   <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                    Todavía no hay impresoras configuradas.
+                    {tr("no_printers")}
                   </p>
                 )}
                 {status?.printers?.map((printer: any) => (
@@ -320,7 +344,7 @@ export function App() {
                           <Badge
                             variant={printer.enabled ? "secondary" : "outline"}
                           >
-                            {printer.enabled ? "Habilitada" : "Deshabilitada"}
+                            {printer.enabled ? tr("enabled") : tr("disabled")}
                           </Badge>
                           <Badge variant="outline">{printer.tipo}</Badge>
                         </div>
@@ -331,15 +355,17 @@ export function App() {
                           {printer.runtime?.connection?.ok && (
                             <CheckCircle2 className="size-3 text-emerald-600" />
                           )}
-                          {printer.runtime?.connection?.message ||
-                            "Sin comprobación reciente"}
+                          {translateMessage(
+                            language,
+                            printer.runtime?.connection?.message,
+                          ) || tr("no_recent_check")}
                         </p>
                       </div>
                       <div className="flex gap-2">
                         <Button
                           size="sm"
                           variant="outline"
-                          title="Imprime un ticket de prueba"
+                          title={tr("print_test")}
                           disabled={Boolean(busy)}
                           onClick={() =>
                             void run(`test-${printer.id}`, () =>
@@ -350,7 +376,7 @@ export function App() {
                           }
                         >
                           <Printer data-icon="inline-start" />
-                          Imprimir prueba
+                          {tr("print_test")}
                         </Button>
                         <Button
                           size="sm"
@@ -375,7 +401,7 @@ export function App() {
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          aria-label="Editar"
+                          aria-label={tr("edit")}
                           onClick={() => openEdit(printer)}
                         >
                           <Pencil />
@@ -383,9 +409,15 @@ export function App() {
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          aria-label="Eliminar"
+                          aria-label={tr("delete")}
                           onClick={() => {
-                            if (confirm(`¿Eliminar ${printer.nombre}?`))
+                            if (
+                              confirm(
+                                tr("delete_printer_confirm", {
+                                  name: printer.nombre,
+                                }),
+                              )
+                            )
                               void run(`delete-${printer.id}`, () =>
                                 window.bridge.deletePrinter(printer.id),
                               );
@@ -404,10 +436,10 @@ export function App() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Radar className="size-5" />
-                Detección de impresoras
+                {tr("printer_detection")}
               </CardTitle>
               <CardDescription>
-                Busca impresoras en la red, por USB o por Bluetooth/serial.
+                {tr("printer_detection_description")}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2 md:grid-cols-3">
@@ -420,8 +452,8 @@ export function App() {
                   <Loader2 data-icon="inline-start" className="animate-spin" />
                 )}
                 {scanningKind === "network"
-                  ? "Buscando en red…"
-                  : "Buscar en red"}
+                  ? tr("searching_network")
+                  : tr("find_network")}
               </Button>
               <Button
                 variant="outline"
@@ -431,7 +463,9 @@ export function App() {
                 {scanningKind === "usb" && (
                   <Loader2 data-icon="inline-start" className="animate-spin" />
                 )}
-                {scanningKind === "usb" ? "Detectando USB…" : "Detectar USB"}
+                {scanningKind === "usb"
+                  ? tr("detecting_usb")
+                  : tr("detect_usb")}
               </Button>
               <Button
                 variant="outline"
@@ -442,27 +476,31 @@ export function App() {
                   <Loader2 data-icon="inline-start" className="animate-spin" />
                 )}
                 {scanningKind === "bluetooth"
-                  ? "Buscando dispositivos…"
-                  : "Bluetooth / serial"}
+                  ? tr("searching_devices")
+                  : tr("bluetooth_serial")}
               </Button>
             </CardContent>
             {scanningKind && (
               <CardContent className="border-t pt-4">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
-                  Buscando dispositivos; espera a que termine.
+                  {tr("wait_for_scan")}
                 </div>
               </CardContent>
             )}
             {discovery && !scanningKind && (
               <CardContent className="border-t pt-4">
                 <div className="mb-3">
-                  <p className="text-sm font-medium">
-                    Resultados del último escaneo
-                  </p>
+                  <p className="text-sm font-medium">{tr("latest_scan")}</p>
                   <p className="text-xs text-muted-foreground">
-                    {discovery.notes?.join(" ") ||
-                      `${discovery.items?.length || 0} dispositivo(s) encontrado(s).`}
+                    {discovery.notes
+                      ?.map((note: BridgeMessage) =>
+                        translateMessage(language, note),
+                      )
+                      .join(" ") ||
+                      tr("devices_found", {
+                        count: discovery.items?.length || 0,
+                      })}
                   </p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
@@ -486,13 +524,13 @@ export function App() {
                             })
                           }
                         >
-                          Usar este resultado
+                          {tr("use_result")}
                         </Button>
                       </div>
                     ))
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      No se encontraron dispositivos.
+                      {tr("no_devices")}
                     </p>
                   )}
                 </div>
@@ -509,16 +547,18 @@ export function App() {
           <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl">
             <DialogHeader>
               <DialogTitle>
-                {form?.id ? `Editar ${form.nombre}` : "Agregar impresora"}
+                {form?.id
+                  ? tr("edit_printer", { name: form.nombre })
+                  : tr("add_printer")}
               </DialogTitle>
               <DialogDescription>
-                Comprueba la conexión antes de guardarla.
+                {tr("check_connection_before_saving")}
               </DialogDescription>
             </DialogHeader>
             {form && (
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="grid gap-1 text-sm font-medium">
-                  Nombre
+                  {tr("name")}
                   <Input
                     value={form.nombre}
                     onChange={(event) =>
@@ -527,7 +567,7 @@ export function App() {
                   />
                 </label>
                 <label className="grid gap-1 text-sm font-medium">
-                  Tipo
+                  {tr("type")}
                   <Select
                     value={form.tipo}
                     onValueChange={(value) =>
@@ -538,18 +578,16 @@ export function App() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="network">
-                        Red / Ethernet / Wi‑Fi
-                      </SelectItem>
+                      <SelectItem value="network">{tr("network")}</SelectItem>
                       <SelectItem value="usb">USB</SelectItem>
                       <SelectItem value="bluetooth">
-                        Bluetooth / serial
+                        {tr("bluetooth")}
                       </SelectItem>
                     </SelectContent>
                   </Select>
                 </label>
                 <label className="grid gap-1 text-sm font-medium">
-                  Ancho
+                  {tr("width")}
                   <Select
                     value={String(form.anchoMm)}
                     onValueChange={(value) =>
@@ -580,7 +618,7 @@ export function App() {
                 {form.tipo === "network" && (
                   <>
                     <label className="grid gap-1 text-sm font-medium">
-                      IP / host
+                      {tr("host")}
                       <Input
                         value={String(form.connection.host || "")}
                         onChange={(event) =>
@@ -589,7 +627,7 @@ export function App() {
                       />
                     </label>
                     <label className="grid gap-1 text-sm font-medium">
-                      Puerto
+                      {tr("port")}
                       <Input
                         type="number"
                         value={String(form.connection.port || 9100)}
@@ -628,9 +666,9 @@ export function App() {
                     )}
                     {isWindows && (
                       <label className="grid gap-1 text-sm font-medium md:col-span-2">
-                        Impresora instalada en Windows
+                        {tr("installed_windows_printer")}
                         <Input
-                          placeholder="Nombre exacto de la impresora en Windows"
+                          placeholder={tr("windows_printer_placeholder")}
                           value={String(form.connection.systemPrinter || "")}
                           onChange={(event) =>
                             setConnection("systemPrinter", event.target.value)
@@ -643,7 +681,7 @@ export function App() {
                 {form.tipo === "bluetooth" && (
                   <>
                     <label className="grid gap-1 text-sm font-medium">
-                      Puerto / path
+                      {tr("path")}
                       <Input
                         placeholder="COM5"
                         value={String(form.connection.path || "")}
@@ -665,7 +703,7 @@ export function App() {
                   </>
                 )}
                 <label className="flex items-center justify-between rounded-lg border p-3 text-sm font-medium">
-                  Abrir cajón
+                  {tr("open_drawer_setting")}
                   <Switch
                     checked={form.abreCajon}
                     onCheckedChange={(abreCajon) =>
@@ -674,7 +712,7 @@ export function App() {
                   />
                 </label>
                 <label className="flex items-center justify-between rounded-lg border p-3 text-sm font-medium">
-                  Impresora habilitada
+                  {tr("printer_enabled")}
                   <Switch
                     checked={form.enabled}
                     onCheckedChange={(enabled) => setForm({ ...form, enabled })}
@@ -684,7 +722,7 @@ export function App() {
             )}
             <DialogFooter>
               <Button variant="outline" onClick={closeForm}>
-                Cancelar
+                {tr("cancel")}
               </Button>
               <Button
                 variant="outline"
@@ -694,10 +732,10 @@ export function App() {
                 {busy === "test-draft" && (
                   <Loader2 data-icon="inline-start" className="animate-spin" />
                 )}
-                Probar sin guardar
+                {tr("test_without_saving")}
               </Button>
               <Button onClick={() => void save()} disabled={busy === "save"}>
-                Guardar impresora
+                {tr("save_printer")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -705,14 +743,34 @@ export function App() {
         <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>Ajustes avanzados</DialogTitle>
+              <DialogTitle>{tr("advanced_settings")}</DialogTitle>
               <DialogDescription>
-                Configura el servicio local y los orígenes autorizados.
+                {tr("settings_description")}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <label className="grid gap-1 text-sm font-medium">
-                Puerto
+                {tr("language")}
+                <Select
+                  value={languageSetting}
+                  onValueChange={(value) =>
+                    setLanguageSetting(value as LanguageSetting)
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="system">
+                      {tr("language_system")}
+                    </SelectItem>
+                    <SelectItem value="es">{tr("language_spanish")}</SelectItem>
+                    <SelectItem value="en">{tr("language_english")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="grid gap-1 text-sm font-medium">
+                {tr("port")}
                 <Input
                   value={port}
                   type="number"
@@ -720,7 +778,7 @@ export function App() {
                 />
               </label>
               <label className="grid gap-1 text-sm font-medium">
-                Orígenes autorizados
+                {tr("allowed_origins")}
                 <textarea
                   className="min-h-28 rounded-lg border bg-transparent px-2.5 py-2 text-sm"
                   value={origins}
@@ -731,7 +789,7 @@ export function App() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setSettingsOpen(false)}>
-                Cancelar
+                {tr("cancel")}
               </Button>
               <Button
                 disabled={busy === "settings"}
@@ -741,7 +799,7 @@ export function App() {
                   })()
                 }
               >
-                Guardar ajustes
+                {tr("save_settings")}
               </Button>
             </DialogFooter>
           </DialogContent>

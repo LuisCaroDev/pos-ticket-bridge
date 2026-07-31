@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
+import { execFile } from "node:child_process";
 import net from "node:net";
 import os from "node:os";
-import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { message } from "../i18n";
 import type { Printer } from "./types";
+
 const exec = promisify(execFile);
 const probe = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
@@ -18,6 +20,7 @@ const probe = (host: string, port: number) =>
     socket.once("error", () => end(false));
     socket.connect(port, host);
   });
+
 export async function discoverNetwork() {
   const candidates = Object.values(os.networkInterfaces())
     .flat()
@@ -41,7 +44,7 @@ export async function discoverNetwork() {
     active.filter(Boolean).forEach((host) =>
       items.push({
         id: "",
-        nombre: `Impresora ${host}`,
+        nombre: host!,
         tipo: "network",
         anchoMm: 80,
         codepage: "CP850",
@@ -53,9 +56,10 @@ export async function discoverNetwork() {
   }
   return {
     items,
-    notes: [`Hosts escaneados en puerto 9100: ${candidates.length}.`],
+    notes: [message("network_hosts_scanned", { count: candidates.length })],
   };
 }
+
 const isUsbPrinter = (device: any) =>
   device.deviceClass === 7 ||
   device.configurations?.some((configuration: any) =>
@@ -77,6 +81,7 @@ const usbString = (
     return "";
   }
 };
+
 async function discoverMacUsb() {
   try {
     const { usb } = require("usb");
@@ -86,7 +91,7 @@ async function discoverMacUsb() {
       nombre:
         usbString(device, "productName") ||
         usbString(device, "manufacturerName") ||
-        `Impresora USB ${index + 1}`,
+        `USB ${index + 1}`,
       tipo: "usb" as const,
       anchoMm: 80 as const,
       codepage: "CP850",
@@ -100,26 +105,17 @@ async function discoverMacUsb() {
     }));
     return {
       items,
-      notes: devices.length
-        ? []
-        : ["No se detectaron dispositivos USB de clase impresora."],
+      notes: devices.length ? [] : [message("mac_usb_not_found")],
     };
-  } catch (error) {
-    return {
-      items: [],
-      notes: [(error as Error).message || "USB no disponible en macOS"],
-    };
+  } catch {
+    return { items: [], notes: [message("mac_usb_unavailable")] };
   }
 }
+
 export async function discoverUsb() {
   if (process.platform === "darwin") return discoverMacUsb();
   if (process.platform !== "win32")
-    return {
-      items: [],
-      notes: [
-        "La detección USB del sistema solo está disponible en Windows y macOS.",
-      ],
-    };
+    return { items: [], notes: [message("usb_detection_unsupported")] };
   try {
     const script =
       "Get-CimInstance Win32_Printer | Where-Object { $_.PortName -match '^USB\\d+$' } | Select-Object Name,PortName | ConvertTo-Json -Compress";
@@ -135,34 +131,24 @@ export async function discoverUsb() {
       : [];
     const printers = Array.isArray(result) ? result : [result];
     const items: Printer[] = printers.map((printer) => ({
-        id: "",
-        nombre: printer.Name,
-        tipo: "usb" as const,
-        anchoMm: 80 as const,
-        codepage: "CP850",
-        abreCajon: false,
-        enabled: true,
-        connection: {
-          systemPrinter: printer.Name,
-          port: printer.PortName,
-        },
-      }));
+      id: "",
+      nombre: printer.Name,
+      tipo: "usb" as const,
+      anchoMm: 80 as const,
+      codepage: "CP850",
+      abreCajon: false,
+      enabled: true,
+      connection: { systemPrinter: printer.Name, port: printer.PortName },
+    }));
     return {
       items,
-      notes: items.length
-        ? []
-        : ["No se detectaron impresoras USB instaladas en Windows."],
+      notes: items.length ? [] : [message("windows_usb_not_found")],
     };
-  } catch (error) {
-    return {
-      items: [],
-      notes: [
-        (error as Error).message ||
-          "No se pudo consultar las impresoras USB de Windows",
-      ],
-    };
+  } catch {
+    return { items: [], notes: [message("windows_usb_unavailable")] };
   }
 }
+
 export async function discoverBluetooth() {
   try {
     const Adapter = require("@node-escpos/serialport-adapter");
@@ -171,8 +157,8 @@ export async function discoverBluetooth() {
       items: ports.map((port: any) => ({
         id: "",
         nombre: port.friendlyName || port.manufacturer || port.path,
-        tipo: "bluetooth",
-        anchoMm: 80,
+        tipo: "bluetooth" as const,
+        anchoMm: 80 as const,
         codepage: "CP850",
         abreCajon: false,
         enabled: true,
@@ -182,20 +168,20 @@ export async function discoverBluetooth() {
           channel: port.manufacturer || "",
         },
       })),
-      notes: [
-        "Empareja la impresora con el sistema operativo antes de probarla.",
-      ],
+      notes: [message("bluetooth_pair_first")],
     };
-  } catch (error) {
-    return {
-      items: [],
-      notes: [(error as Error).message || "Bluetooth/serial no disponible"],
-    };
+  } catch {
+    return { items: [], notes: [message("bluetooth_unavailable")] };
   }
 }
+
 export async function checkConnection(printer: Printer) {
   if (!printer.enabled)
-    return { ok: false, state: "offline", message: "Impresora deshabilitada" };
+    return {
+      ok: false,
+      state: "offline",
+      message: message("printer_disabled"),
+    };
   if (printer.tipo === "network") {
     const host = String(printer.connection.host);
     const port = Number(printer.connection.port) || 9100;
@@ -203,9 +189,10 @@ export async function checkConnection(printer: Printer) {
     return {
       ok,
       state: ok ? "ready" : "offline",
-      message: ok
-        ? `Conectada a ${host}:${port}`
-        : `No responde ${host}:${port}`,
+      message: message(ok ? "network_connected" : "network_unreachable", {
+        host,
+        port,
+      }),
     };
   }
   if (printer.tipo === "bluetooth") {
@@ -215,9 +202,7 @@ export async function checkConnection(printer: Printer) {
     return {
       ok: found,
       state: found ? "detected" : "offline",
-      message: found
-        ? "Puerto serial detectado; valida con ticket de prueba."
-        : "No se detecta el puerto configurado",
+      message: message(found ? "serial_detected" : "serial_not_detected"),
     };
   }
   if (process.platform === "darwin") {
@@ -229,9 +214,7 @@ export async function checkConnection(printer: Printer) {
     return {
       ok: found,
       state: found ? "ready" : "offline",
-      message: found
-        ? "Dispositivo USB detectado en macOS"
-        : "No se detecta el dispositivo USB configurado en macOS",
+      message: message(found ? "mac_usb_detected" : "mac_usb_not_detected"),
     };
   }
   const systemPrinter = String(printer.connection.systemPrinter || "").trim();
@@ -239,7 +222,7 @@ export async function checkConnection(printer: Printer) {
     return {
       ok: false,
       state: "offline",
-      message: "Configura una impresora instalada en Windows para usar USB.",
+      message: message("windows_printer_required"),
     };
   const found = (await discoverUsb()).items.some(
     (item) => item.connection.systemPrinter === systemPrinter,
@@ -247,8 +230,8 @@ export async function checkConnection(printer: Printer) {
   return {
     ok: found,
     state: found ? "ready" : "offline",
-    message: found
-      ? "Impresora USB detectada por Windows"
-      : "Windows no detecta la impresora USB configurada",
+    message: message(
+      found ? "windows_usb_detected" : "windows_usb_not_detected",
+    ),
   };
 }

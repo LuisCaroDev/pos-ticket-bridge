@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ConfigStore } from "../src/core/config-store";
 import { discoverUsb } from "../src/core/discovery";
 import { createBridgeServer } from "../src/core/server";
+import { resolveLanguage } from "../src/i18n";
 
 const dirs: string[] = [];
 function fixture() {
@@ -25,8 +26,58 @@ describe("POS Ticket Bridge", () => {
       port: 9977,
       printers: [],
       allowedOrigins: [],
+      language: "system",
     });
     expect(store.get().token).toHaveLength(48);
+  });
+
+  it("loads legacy configurations without rewriting them", () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pos-ticket-bridge-test-"),
+    );
+    dirs.push(dir);
+    const configPath = path.join(dir, "config.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        port: 9977,
+        token: "a".repeat(48),
+        allowedOrigins: [],
+        printers: [],
+      }),
+    );
+
+    expect(new ConfigStore(configPath).get().language).toBe("system");
+    expect(JSON.parse(fs.readFileSync(configPath, "utf8")).language).toBeUndefined();
+  });
+
+  it("stores all language preferences and resolves system locales safely", () => {
+    const { store } = fixture();
+    store.settings({ language: "en" });
+    expect(store.get().language).toBe("en");
+    store.settings({ language: "es" });
+    expect(store.get().language).toBe("es");
+    store.settings({ language: "system" });
+    expect(resolveLanguage("system", "en-US")).toBe("en");
+    expect(resolveLanguage("system", "es-419")).toBe("es");
+    expect(resolveLanguage("system", "fr-FR")).toBe("es");
+  });
+
+  it("persists settings after reopening the config store", () => {
+    const { store } = fixture();
+    store.settings({
+      port: 9988,
+      allowedOrigins: ["https://pos.example.com"],
+      language: "en",
+    });
+
+    const reopened = new ConfigStore(store.path());
+    expect(reopened.get()).toMatchObject({
+      port: 9988,
+      allowedOrigins: ["https://pos.example.com"],
+      language: "en",
+    });
   });
 
   it("exposes advanced settings in the status used by the app", async () => {
@@ -97,6 +148,16 @@ describe("POS Ticket Bridge", () => {
       payload: { printerId: "caja", job: { version: 1, blocks: [] } },
     });
     expect(denied.statusCode).toBe(401);
+    expect(denied.json().error).toEqual({ code: "invalid_token" });
+    const missing = await bridge.app.inject({
+      method: "POST",
+      url: "/test/missing",
+      headers: { "x-agent-token": bridge.store.get().token },
+    });
+    expect(missing.json().error).toEqual({
+      code: "printer_not_found",
+      params: { printerId: "missing" },
+    });
     await bridge.stop();
   });
 });

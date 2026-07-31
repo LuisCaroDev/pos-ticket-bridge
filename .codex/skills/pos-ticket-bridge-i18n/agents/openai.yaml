@@ -1,0 +1,4 @@
+interface:
+  display_name: "POS Bridge i18n"
+  short_description: "Add localized text with stable IDs"
+  default_prompt: "Use $pos-ticket-bridge-i18n to add localized text to this project."

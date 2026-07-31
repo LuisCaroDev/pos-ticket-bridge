@@ -1,3 +1,5 @@
+import type { BridgeMessage, LanguageSetting } from "../i18n";
+
 export type PrinterType = "network" | "usb" | "bluetooth";
 export type Printer = {
   id: string;
@@ -14,6 +16,7 @@ export type BridgeConfig = {
   port: number;
   token: string;
   allowedOrigins: string[];
+  language: LanguageSetting;
   printers: Printer[];
 };
 export type PrintBlock = {
@@ -43,6 +46,7 @@ export type Diagnostic = {
   finishedAt?: string;
   durationMs?: number;
   ok: boolean;
-  message?: string;
+  message?: BridgeMessage;
+  cause?: string;
   steps: Array<Record<string, unknown>>;
 };

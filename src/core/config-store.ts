@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { BridgeError } from "../i18n";
 import type { BridgeConfig, Printer } from "./types";
 
 const printerSchema = z.object({
@@ -23,6 +24,7 @@ const configSchema = z.object({
   port: z.number().int().min(1).max(65535),
   token: z.string().min(1),
   allowedOrigins: z.array(z.string()),
+  language: z.enum(["system", "es", "en"]).default("system"),
   printers: z.array(printerSchema),
 });
 export const token = () => crypto.randomBytes(24).toString("hex");
@@ -53,6 +55,7 @@ export const defaultConfig = (): BridgeConfig => ({
   port: 9977,
   token: token(),
   allowedOrigins: [],
+  language: "system",
   printers: [],
 });
 
@@ -68,9 +71,8 @@ export class ConfigStore {
       this.write(next);
       return next;
     }
-    return configSchema.parse(
-      JSON.parse(fs.readFileSync(this.filePath, "utf8")),
-    ) as BridgeConfig;
+    const raw = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
+    return configSchema.parse(raw) as BridgeConfig;
   }
   private write(value: BridgeConfig) {
     fs.writeFileSync(
@@ -100,13 +102,16 @@ export class ConfigStore {
       suggestedHosts: suggestedHosts(this.config.port),
     };
   }
-  settings(input: Partial<Pick<BridgeConfig, "port" | "allowedOrigins">>) {
+  settings(
+    input: Partial<Pick<BridgeConfig, "port" | "allowedOrigins" | "language">>,
+  ) {
     return this.save({
       ...this.config,
       port: Number(input.port) || this.config.port,
       allowedOrigins:
         input.allowedOrigins?.map((x) => x.trim()).filter(Boolean) ||
         this.config.allowedOrigins,
+      language: input.language || this.config.language,
     });
   }
   private normalized(input: Partial<Printer>, current?: Printer): Printer {
@@ -169,7 +174,7 @@ export class ConfigStore {
   }
   update(id: string, input: Partial<Printer>) {
     const index = this.config.printers.findIndex((p) => p.id === id);
-    if (index < 0) throw new Error(`Impresora ${id} no configurada`);
+    if (index < 0) throw new BridgeError("printer_not_found", { printerId: id });
     const printer = this.normalized(input, this.config.printers[index]);
     printer.id = this.unique(printer.id, id);
     const printers = [...this.config.printers];
@@ -191,12 +196,12 @@ export class ConfigStore {
     return this.create({
       ...source,
       id: `${source.id}-copy`,
-      nombre: `${source.nombre} copia`,
+      nombre: source.nombre,
     });
   }
   find(id: string) {
     const printer = this.config.printers.find((p) => p.id === id);
-    if (!printer) throw new Error(`Impresora ${id} no configurada`);
+    if (!printer) throw new BridgeError("printer_not_found", { printerId: id });
     return structuredClone(printer);
   }
 }
