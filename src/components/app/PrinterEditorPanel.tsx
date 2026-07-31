@@ -1,7 +1,7 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, type FieldPath, type Resolver } from "react-hook-form";
-import { Clipboard, Loader2 } from "lucide-react";
+import { Clipboard, Loader2, XIcon } from "lucide-react";
 import { translateMessage, type TranslationKey } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,8 +64,9 @@ const diagnosticDetails = (entry: Record<string, unknown>) =>
     .map(([key, value]) => `${key}: ${String(value)}`)
     .join(" · ");
 
-type PrinterFormDialogProps = {
+type PrinterEditorPanelProps = {
   form?: PrinterForm;
+  detected: boolean;
   diagnostics: any[];
   draftDiagnostic: any;
   profileCatalog: any;
@@ -79,8 +80,9 @@ type PrinterFormDialogProps = {
   onSave: () => void;
 };
 
-export const PrinterFormDialog = memo(function PrinterFormDialog({
+export const PrinterEditorPanel = memo(function PrinterEditorPanel({
   form,
+  detected,
   diagnostics,
   draftDiagnostic,
   profileCatalog,
@@ -92,11 +94,12 @@ export const PrinterFormDialog = memo(function PrinterFormDialog({
   onConfirmSpanish,
   onExportReport,
   onSave,
-}: PrinterFormDialogProps) {
+}: PrinterEditorPanelProps) {
   const { copy, busy, setNotice } = useBridge();
   const { language, tr } = useI18n();
   const wasOpen = useRef(false);
   const hasAttemptedValidation = useRef(false);
+  const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
   const {
     reset,
     handleSubmit,
@@ -222,22 +225,56 @@ export const PrinterFormDialog = memo(function PrinterFormDialog({
     });
     onClearDraftDiagnostic();
   };
+  const requestClose = () => {
+    if (isDirty) {
+      setDiscardConfirmationOpen(true);
+      return;
+    }
+    onClose();
+  };
+
+  if (!form) return null;
 
   return (
-    <Dialog open={Boolean(form)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl">
-        <DialogHeader>
-          <DialogTitle>
-            {form?.id
-              ? tr("edit_printer", { name: form.nombre })
-              : tr("add_printer")}
-          </DialogTitle>
-          <DialogDescription>
-            {tr("check_connection_before_saving")}
-          </DialogDescription>
-        </DialogHeader>
-        {form && (
+    <aside
+      data-slot="printer-editor-panel"
+      aria-label={tr("close")}
+      className="relative flex h-full w-full max-w-2xl min-w-0 flex-col bg-popover text-sm text-popover-foreground"
+    >
+      <header className="shrink-0 border-b px-6 py-5 pr-12">
+        <h2 className="text-base leading-none font-medium">
+          {form?.id
+            ? tr("edit_printer", { name: form.nombre })
+            : tr("add_printer")}
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {tr("check_connection_before_saving")}
+        </p>
+      </header>
+      <Button
+        data-slot="printer-editor-close"
+        variant="ghost"
+        className="absolute top-3 right-3"
+        size="icon-sm"
+        onClick={requestClose}
+        aria-label={tr("close")}
+      >
+        <XIcon />
+      </Button>
+      {form && (
+        <div
+          data-slot="printer-form-body"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 [scrollbar-gutter:stable]"
+        >
           <div className="space-y-6">
+            {detected && (
+              <p
+                role="status"
+                className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-muted-foreground"
+              >
+                {tr("detected_connection_notice")}
+              </p>
+            )}
             <label className="grid gap-1 text-sm font-medium">
               {tr("name")}
               <Input
@@ -887,9 +924,11 @@ export const PrinterFormDialog = memo(function PrinterFormDialog({
               </div>
             </details>
           </div>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+        </div>
+      )}
+      <div className="shrink-0 border-t bg-muted/50 p-4">
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={requestClose}>
             {tr("cancel")}
           </Button>
           <Button
@@ -912,8 +951,38 @@ export const PrinterFormDialog = memo(function PrinterFormDialog({
           >
             {tr("save_printer")}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </div>
+      <Dialog
+        open={discardConfirmationOpen}
+        onOpenChange={setDiscardConfirmationOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tr("discard_printer_changes_title")}</DialogTitle>
+            <DialogDescription>
+              {tr("discard_printer_changes_description")}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDiscardConfirmationOpen(false)}
+            >
+              {tr("continue_editing")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setDiscardConfirmationOpen(false);
+                onClose();
+              }}
+            >
+              {tr("discard_changes")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </aside>
   );
 });

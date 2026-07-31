@@ -77,6 +77,11 @@ export type TranslationKey =
   | "no_devices"
   | "edit_printer"
   | "add_printer"
+  | "detected_connection_notice"
+  | "discard_printer_changes_title"
+  | "discard_printer_changes_description"
+  | "discard_changes"
+  | "continue_editing"
   | "check_connection_before_saving"
   | "connection_section"
   | "print_profile_section"
@@ -96,6 +101,7 @@ export type TranslationKey =
   | "open_drawer_setting"
   | "printer_enabled"
   | "cancel"
+  | "close"
   | "test_without_saving"
   | "save_printer"
   | "validation_required"
@@ -238,6 +244,13 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     no_devices: "No se encontraron dispositivos.",
     edit_printer: "Editar {name}",
     add_printer: "Agregar impresora",
+    detected_connection_notice:
+      "Datos de conexiÃ³n detectados; revÃ­salos antes de guardar.",
+    discard_printer_changes_title: "Descartar cambios sin guardar",
+    discard_printer_changes_description:
+      "Los cambios realizados en esta impresora se perderÃ¡n.",
+    discard_changes: "Descartar cambios",
+    continue_editing: "Seguir editando",
     check_connection_before_saving: "Comprueba la conexión antes de guardarla.",
     connection_section: "Conexión",
     print_profile_section: "Perfil de impresión",
@@ -257,6 +270,7 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     open_drawer_setting: "Abrir cajón",
     printer_enabled: "Impresora habilitada",
     cancel: "Cancelar",
+    close: "Cerrar",
     test_without_saving: "Probar sin guardar",
     save_printer: "Guardar impresora",
     validation_required: "Este campo es obligatorio.",
@@ -264,7 +278,8 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     validation_baud_rate: "Ingresa una velocidad válida.",
     validation_vendor_id: "Ingresa el Vendor ID.",
     validation_product_id: "Ingresa el Product ID.",
-    validation_windows_printer: "Selecciona una impresora instalada en Windows.",
+    validation_windows_printer:
+      "Selecciona una impresora instalada en Windows.",
     validation_model_length: "El modelo no puede superar 160 caracteres.",
     validation_encoding: "Selecciona una codificación.",
     validation_character_table: "La tabla debe estar entre 0 y 255.",
@@ -415,6 +430,13 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     no_devices: "No devices found.",
     edit_printer: "Edit {name}",
     add_printer: "Add printer",
+    detected_connection_notice:
+      "Detected connection details; review them before saving.",
+    discard_printer_changes_title: "Discard unsaved changes",
+    discard_printer_changes_description:
+      "The changes made to this printer will be lost.",
+    discard_changes: "Discard changes",
+    continue_editing: "Continue editing",
     check_connection_before_saving: "Check the connection before saving it.",
     connection_section: "Connection",
     print_profile_section: "Print profile",
@@ -434,6 +456,7 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     open_drawer_setting: "Open drawer",
     printer_enabled: "Printer enabled",
     cancel: "Cancel",
+    close: "Close",
     test_without_saving: "Test without saving",
     save_printer: "Save printer",
     validation_required: "This field is required.",

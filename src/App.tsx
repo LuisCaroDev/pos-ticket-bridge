@@ -3,8 +3,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { AppHeader } from "@/components/app/AppHeader";
 import { BridgeAccessCards } from "@/components/app/BridgeAccessCards";
 import { DiscoveryPanel } from "@/components/app/DiscoveryPanel";
-import { PrinterFormDialog } from "@/components/app/PrinterFormDialog";
+import { PrinterEditorPanel } from "@/components/app/PrinterEditorPanel";
 import { PrinterList } from "@/components/app/PrinterList";
+import { PrinterWorkspace } from "@/components/app/PrinterWorkspace";
 import { SettingsDialog } from "@/components/app/SettingsDialog";
 import {
   blankPrinter,
@@ -20,6 +21,7 @@ function AppContent() {
   const [form, setForm] = useState<PrinterForm>();
   const [draftDiagnostic, setDraftDiagnostic] = useState<any>();
   const [draftSessionId, setDraftSessionId] = useState<string>();
+  const [detectedCreation, setDetectedCreation] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isWindows = window.bridge.platform === "win32";
   const { tr } = useI18n();
@@ -39,21 +41,42 @@ function AppContent() {
     status,
   } = useBridge();
 
-  const openCreate = useCallback(() => {
-    const next = blankPrinter();
-    setDraftDiagnostic(undefined);
-    setDraftSessionId(
-      globalThis.crypto?.randomUUID?.() ||
-        `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    setForm(next);
-    void loadProfileCatalog(next);
-  }, [loadProfileCatalog]);
+  const openCreate = useCallback(
+    (initial?: PrinterForm, detected = false) => {
+      const next = initial || blankPrinter();
+      setDraftDiagnostic(undefined);
+      setDetectedCreation(detected);
+      setDraftSessionId(
+        globalThis.crypto?.randomUUID?.() ||
+          `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
+      setForm(next);
+      void loadProfileCatalog(next);
+    },
+    [loadProfileCatalog],
+  );
+  const openCreateFromDiscovery = useCallback(
+    (detected: PrinterForm) => {
+      const defaults = blankPrinter();
+      const result = { ...detected };
+      delete result.id;
+      openCreate(
+        {
+          ...defaults,
+          ...result,
+          connection: { ...defaults.connection, ...result.connection },
+        },
+        true,
+      );
+    },
+    [openCreate],
+  );
   const openEdit = useCallback(
     (printer: any) => {
       const next = formFor(printer);
       setDraftDiagnostic(undefined);
       setDraftSessionId(undefined);
+      setDetectedCreation(false);
       setForm(next);
       void loadProfileCatalog(next);
     },
@@ -65,6 +88,7 @@ function AppContent() {
         void window.bridge.discardDraftDiagnostics(draftSessionId);
       setDraftDiagnostic(undefined);
       setDraftSessionId(undefined);
+      setDetectedCreation(false);
       setForm(undefined);
     },
     [draftSessionId, form?.id],
@@ -164,43 +188,54 @@ function AppContent() {
     [draftDiagnostic, draftSessionId, form?.id, status?.diagnostics],
   );
 
+  const primaryContent = (
+    <>
+      <AppHeader onOpenSettings={() => setSettingsOpen(true)} />
+      {error && (
+        <Card className="border-destructive/40">
+          <CardContent className="p-4 text-sm text-destructive">
+            {error}
+          </CardContent>
+        </Card>
+      )}
+      {notice && (
+        <Card className="border-emerald-300">
+          <CardContent className="p-4 text-sm text-emerald-700">
+            {notice}
+          </CardContent>
+        </Card>
+      )}
+      <BridgeAccessCards />
+      <section className="space-y-5">
+        <PrinterList onCreate={() => openCreate()} onEdit={openEdit} />
+        <DiscoveryPanel onUseResult={openCreateFromDiscovery} />
+      </section>
+    </>
+  );
+  const printerForm = (
+    <PrinterEditorPanel
+      form={form}
+      detected={detectedCreation}
+      diagnostics={formDiagnostics}
+      draftDiagnostic={draftDiagnostic}
+      profileCatalog={profileCatalog}
+      isWindows={isWindows}
+      onClose={closeForm}
+      onFormChange={setForm}
+      onClearDraftDiagnostic={() => setDraftDiagnostic(undefined)}
+      onTest={testDraft}
+      onConfirmSpanish={confirmSpanishValidation}
+      onExportReport={exportCompatibilityReport}
+      onSave={save}
+    />
+  );
+
   return (
-    <main className="min-h-screen bg-muted/40 p-6 text-foreground">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5">
-        <AppHeader onOpenSettings={() => setSettingsOpen(true)} />
-        {error && (
-          <Card className="border-destructive/40">
-            <CardContent className="p-4 text-sm text-destructive">
-              {error}
-            </CardContent>
-          </Card>
-        )}
-        {notice && (
-          <Card className="border-emerald-300">
-            <CardContent className="p-4 text-sm text-emerald-700">
-              {notice}
-            </CardContent>
-          </Card>
-        )}
-        <BridgeAccessCards />
-        <section className="space-y-5">
-          <PrinterList onCreate={openCreate} onEdit={openEdit} />
-          <DiscoveryPanel onUseResult={openEdit} />
-        </section>
-        <PrinterFormDialog
-          form={form}
-          diagnostics={formDiagnostics}
-          draftDiagnostic={draftDiagnostic}
-          profileCatalog={profileCatalog}
-          isWindows={isWindows}
-          onClose={closeForm}
-          onFormChange={setForm}
-          onClearDraftDiagnostic={() => setDraftDiagnostic(undefined)}
-          onTest={testDraft}
-          onConfirmSpanish={confirmSpanishValidation}
-          onExportReport={exportCompatibilityReport}
-          onSave={save}
-        />
+    <main className="h-screen overflow-hidden bg-muted/40 text-foreground">
+      <PrinterWorkspace editor={form ? printerForm : undefined}>
+        {primaryContent}
+      </PrinterWorkspace>
+      <div className="mx-auto w-full max-w-6xl">
         <SettingsDialog
           open={settingsOpen}
           busy={busy === "settings"}
