@@ -10,15 +10,23 @@ import {
 } from "electron";
 import path from "node:path";
 import started from "electron-squirrel-startup";
-import { errorPayload, resolveLanguage, t, testPrintTexts } from "./i18n";
+import { errorPayload, resolveLanguage, t } from "./i18n";
 import { ConfigStore } from "./core/config-store";
 import {
   discoverBluetooth,
   discoverNetwork,
   discoverUsb,
 } from "./core/discovery";
-import { testPrint } from "./core/printer";
+import { createCompatibilityReport } from "./core/compatibility-report";
+import {
+  PROFILE_CATALOG_VERSION,
+  getCatalogProfile,
+  selectablePrinterProfiles,
+  suggestedCatalogProfileId,
+} from "./core/printer-profile-catalog";
+import { defaultPrinterLanguage } from "./core/printer-profiles";
 import { createBridgeServer } from "./core/server";
+import type { Diagnostic } from "./core/types";
 
 let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -92,7 +100,10 @@ function buildTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: t(language, "tray_open"), click: showWindow },
-      { label: t(language, "tray_copy_token"), click: () => clipboard.writeText(config.token) },
+      {
+        label: t(language, "tray_copy_token"),
+        click: () => clipboard.writeText(config.token),
+      },
       {
         label: t(language, "tray_show_hosts"),
         click: async () =>
@@ -114,7 +125,11 @@ function buildTray() {
           } catch (error) {
             dialog.showErrorBox(
               t(language, "print_failed"),
-              t(language, errorPayload(error).code as any, errorPayload(error).params),
+              t(
+                language,
+                errorPayload(error).code as any,
+                errorPayload(error).params,
+              ),
             );
           }
         },
@@ -125,7 +140,11 @@ function buildTray() {
           restartBridge().catch((error) =>
             dialog.showErrorBox(
               t(activeLanguage(), "operation_failed"),
-              t(activeLanguage(), errorPayload(error).code as any, errorPayload(error).params),
+              t(
+                activeLanguage(),
+                errorPayload(error).code as any,
+                errorPayload(error).params,
+              ),
             ),
           ),
       },
@@ -141,12 +160,19 @@ async function quit() {
   app.quit();
 }
 function registerIpc() {
-  const ipc = (channel: string, handler: (...args: any[]) => Promise<any> | any) =>
+  const ipc = (
+    channel: string,
+    handler: (...args: any[]) => Promise<any> | any,
+  ) =>
     ipcMain.handle(channel, async (...args) => {
       try {
         return { ok: true, value: await handler(...args) };
       } catch (error) {
-        return { ok: false, error: errorPayload(error) };
+        return {
+          ok: false,
+          error: errorPayload(error),
+          diagnostic: (error as { diagnostic?: Diagnostic }).diagnostic,
+        };
       }
     });
   ipc("bridge:status", async () => ({
@@ -161,24 +187,57 @@ function registerIpc() {
     else if (oldLanguage !== config.language) buildTray();
     return config;
   });
-  ipc("bridge:create-printer", (_event, input) =>
-    bridge.store.create(input),
-  );
+  ipc("bridge:create-printer", (_event, input, draftSessionId?: string) => {
+    const before = new Set(
+      bridge.store.get().printers.map((printer) => printer.id),
+    );
+    const config = bridge.store.create(input);
+    const printer = config.printers.find((item) => !before.has(item.id));
+    if (draftSessionId && printer)
+      bridge.promoteDraftDiagnostics(draftSessionId, printer.id);
+    return config;
+  });
   ipc("bridge:update-printer", (_event, id, input) =>
     bridge.store.update(id, input),
   );
-  ipc("bridge:delete-printer", (_event, id) =>
-    bridge.store.remove(id),
-  );
-  ipc("bridge:duplicate-printer", (_event, id) =>
-    bridge.store.duplicate(id),
-  );
+  ipc("bridge:delete-printer", (_event, id) => bridge.store.remove(id));
+  ipc("bridge:duplicate-printer", (_event, id) => bridge.store.duplicate(id));
   ipc("bridge:discover", (_event, kind) =>
     kind === "network"
       ? discoverNetwork()
       : kind === "usb"
         ? discoverUsb()
         : discoverBluetooth(),
+  );
+  ipc("bridge:printer-profiles", (_event, input = {}) => {
+    const printer = {
+      ...input,
+      tipo: input.tipo || "network",
+      connection: input.connection || {},
+    } as any;
+    const selected = getCatalogProfile(input.printProfile?.profileId);
+    const profiles = selectablePrinterProfiles();
+    return {
+      version: PROFILE_CATALOG_VERSION,
+      suggestedProfileId: suggestedCatalogProfileId(printer),
+      profiles: profiles.some((profile) => profile.id === selected.id)
+        ? profiles
+        : [...profiles, selected],
+    };
+  });
+  ipc("bridge:compatibility-report", (_event, input, diagnostic) =>
+    createCompatibilityReport(
+      {
+        ...input,
+        id: input.id || "compatibility-report",
+        printProfile: input.printProfile || {
+          language: defaultPrinterLanguage(app.getLocale()),
+          mode: "auto",
+        },
+      },
+      app.getVersion(),
+      diagnostic,
+    ),
   );
   ipc(
     "bridge:request",
@@ -196,15 +255,13 @@ function registerIpc() {
       return payload;
     },
   );
-  ipc("bridge:test-printer", async (_event, input) =>
-    testPrint(
-      { ...input, id: input.id || "test-printer" },
-      testPrintTexts(activeLanguage(), input.nombre || ""),
-    ),
+  ipc("bridge:test-printer", (_event, input, options) =>
+    bridge.testPrinter(input, options),
   );
-  ipc("bridge:copy", (_event, value: string) =>
-    clipboard.writeText(value),
+  ipc("bridge:discard-draft-diagnostics", (_event, draftSessionId: string) =>
+    bridge.discardDraftDiagnostics(draftSessionId),
   );
+  ipc("bridge:copy", (_event, value: string) => clipboard.writeText(value));
 }
 const isPrimaryInstance = !started && app.requestSingleInstanceLock();
 

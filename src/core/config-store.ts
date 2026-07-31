@@ -4,29 +4,127 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import { BridgeError } from "../i18n";
-import type { BridgeConfig, Printer } from "./types";
+import {
+  defaultAutomaticProfileId,
+  defaultCustomProfile,
+  defaultPrinterLanguage,
+  isSupportedEncoding,
+} from "./printer-profiles";
+import { getCatalogProfile } from "./printer-profile-catalog";
+import type { BridgeConfig, Printer, PrintProfile } from "./types";
 
-const printerSchema = z.object({
+const customPrintProfileSchema = z
+  .object({
+    encoding: z.string().min(1),
+    codeTable: z.number().int().min(0).max(255),
+    unicodeFallback: z.enum(["auto", "raster", "native"]),
+    automaticUnicodePolicy: z.enum(["encoding", "ascii"]).optional(),
+  })
+  .strict();
+const profileValidationSchema = z
+  .object({
+    catalogVersion: z.number().int().positive(),
+    confirmedAt: z.string().datetime(),
+  })
+  .strict();
+const validationSchema = z
+  .object({
+    ascii: profileValidationSchema.optional(),
+    "spanish-latin": profileValidationSchema.optional(),
+  })
+  .strict();
+const knownCatalogProfileId = (value: string) =>
+  getCatalogProfile(value).id === value;
+const printProfileSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      language: z.enum(["es", "en"]),
+      mode: z.literal("auto"),
+      profileId: z.string().min(1).refine(knownCatalogProfileId),
+      validation: validationSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      language: z.enum(["es", "en"]),
+      mode: z.literal("custom"),
+      custom: customPrintProfileSchema,
+    })
+    .strict(),
+]);
+const networkConnectionSchema = z
+  .object({
+    host: z.string().min(1),
+    port: z.number().int().min(1).max(65535),
+  })
+  .strict();
+const usbConnectionSchema = z
+  .object({
+    systemPrinter: z.string(),
+    port: z.string(),
+    vendorId: z.string(),
+    productId: z.string(),
+  })
+  .strict();
+const bluetoothConnectionSchema = z
+  .object({
+    path: z.string().min(1),
+    baudRate: z.number().int().positive(),
+    channel: z.string(),
+  })
+  .strict();
+const printerFields = {
   id: z.string().min(1),
   nombre: z.string().min(1),
-  tipo: z.enum(["network", "usb", "bluetooth"]),
-  anchoMm: z.union([z.literal(58), z.literal(80)]).default(80),
-  codepage: z.string().default("CP850"),
-  abreCajon: z.boolean().default(false),
-  enabled: z.boolean().default(true),
-  connection: z.record(
-    z.string(),
-    z.union([z.string(), z.number(), z.undefined()]),
-  ),
-});
-const configSchema = z.object({
-  version: z.literal(1),
-  port: z.number().int().min(1).max(65535),
-  token: z.string().min(1),
-  allowedOrigins: z.array(z.string()),
-  language: z.enum(["system", "es", "en"]).default("system"),
-  printers: z.array(printerSchema),
-});
+  anchoMm: z.union([z.literal(58), z.literal(80)]),
+  reportedModel: z.string().max(160).optional(),
+  printProfile: printProfileSchema,
+  abreCajon: z.boolean(),
+  enabled: z.boolean(),
+};
+const printerSchema = z.discriminatedUnion("tipo", [
+  z
+    .object({
+      ...printerFields,
+      tipo: z.literal("network"),
+      connection: networkConnectionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...printerFields,
+      tipo: z.literal("usb"),
+      connection: usbConnectionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...printerFields,
+      tipo: z.literal("bluetooth"),
+      connection: bluetoothConnectionSchema,
+    })
+    .strict(),
+]);
+const persistedConfigSchema = z
+  .object({
+    version: z.literal(1),
+    port: z.number().int().min(1).max(65535),
+    token: z.string().min(1),
+    allowedOrigins: z.array(z.string()),
+    language: z.enum(["system", "es", "en"]),
+    printers: z.array(z.unknown()),
+  })
+  .strict();
+const configSchema = z
+  .object({
+    version: z.literal(1),
+    port: z.number().int().min(1).max(65535),
+    token: z.string().min(1),
+    allowedOrigins: z.array(z.string()),
+    language: z.enum(["system", "es", "en"]),
+    printers: z.array(printerSchema),
+  })
+  .strict();
 export const token = () => crypto.randomBytes(24).toString("hex");
 export const slug = (value: string) =>
   value
@@ -71,8 +169,25 @@ export class ConfigStore {
       this.write(next);
       return next;
     }
-    const raw = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
-    return configSchema.parse(raw) as BridgeConfig;
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.filePath, "utf8"));
+      const persisted = persistedConfigSchema.parse(raw);
+      const printers = persisted.printers.flatMap((printer) => {
+        const result = printerSchema.safeParse(printer);
+        return result.success ? [result.data] : [];
+      });
+      const next = configSchema.parse({
+        ...persisted,
+        printers,
+      }) as BridgeConfig;
+
+      if (printers.length !== persisted.printers.length) this.write(next);
+      return next;
+    } catch {
+      const next = defaultConfig();
+      this.write(next);
+      return next;
+    }
   }
   private write(value: BridgeConfig) {
     fs.writeFileSync(
@@ -115,14 +230,63 @@ export class ConfigStore {
     });
   }
   private normalized(input: Partial<Printer>, current?: Printer): Printer {
+    const requestedProfile = input.printProfile;
+    const currentProfile = current?.printProfile;
+    const languageChanged =
+      Boolean(requestedProfile?.language) &&
+      requestedProfile?.language !== currentProfile?.language;
+    const profileChanged =
+      requestedProfile?.profileId !== undefined &&
+      requestedProfile.profileId !== currentProfile?.profileId;
+    const preservedValidation =
+      requestedProfile?.validation === undefined
+        ? currentProfile?.validation
+        : requestedProfile.validation;
+    const validation = profileChanged
+      ? undefined
+      : languageChanged
+        ? preservedValidation?.ascii
+          ? { ascii: preservedValidation.ascii }
+          : undefined
+        : preservedValidation;
     const merged = {
       ...current,
       ...input,
+      printProfile: {
+        ...(currentProfile || {
+          language: defaultPrinterLanguage(),
+          mode: "auto" as const,
+          profileId: defaultAutomaticProfileId(),
+        }),
+        ...(requestedProfile || {}),
+        profileId:
+          requestedProfile?.mode === "custom"
+            ? undefined
+            : getCatalogProfile(
+                requestedProfile?.profileId ||
+                  currentProfile?.profileId ||
+                  defaultAutomaticProfileId(),
+              ).id,
+        validation,
+        custom:
+          requestedProfile?.custom === undefined
+            ? currentProfile?.custom
+            : requestedProfile.custom,
+      },
       connection: {
         ...(current?.connection || {}),
         ...(input.connection || {}),
       },
     } as Printer;
+    const selectedProfile = merged.printProfile as PrintProfile;
+    const language = selectedProfile.language === "en" ? "en" : "es";
+    const mode = selectedProfile.mode === "custom" ? "custom" : "auto";
+    const custom = {
+      ...defaultCustomProfile(language),
+      ...(selectedProfile.custom || {}),
+    };
+    if (mode === "custom" && !isSupportedEncoding(custom.encoding))
+      throw new BridgeError("invalid_request");
     const connection =
       merged.tipo === "network"
         ? {
@@ -147,8 +311,26 @@ export class ConfigStore {
       ...merged,
       id: slug(merged.id || merged.nombre || "printer"),
       nombre: String(merged.nombre || "").trim(),
+      reportedModel: String(merged.reportedModel || "").trim() || undefined,
       anchoMm: Number(merged.anchoMm) === 58 ? 58 : 80,
-      codepage: String(merged.codepage || "CP850").toUpperCase(),
+      printProfile: {
+        language,
+        mode,
+        ...(mode === "auto" && selectedProfile.profileId
+          ? { profileId: selectedProfile.profileId }
+          : {}),
+        ...(mode === "auto" && validation ? { validation } : {}),
+        ...(mode === "custom"
+          ? {
+              custom: {
+                encoding: String(custom.encoding).toUpperCase(),
+                codeTable: Number(custom.codeTable),
+                unicodeFallback: custom.unicodeFallback,
+                automaticUnicodePolicy: custom.automaticUnicodePolicy,
+              },
+            }
+          : {}),
+      },
       abreCajon: Boolean(merged.abreCajon),
       enabled: merged.enabled !== false,
       connection,
@@ -174,7 +356,8 @@ export class ConfigStore {
   }
   update(id: string, input: Partial<Printer>) {
     const index = this.config.printers.findIndex((p) => p.id === id);
-    if (index < 0) throw new BridgeError("printer_not_found", { printerId: id });
+    if (index < 0)
+      throw new BridgeError("printer_not_found", { printerId: id });
     const printer = this.normalized(input, this.config.printers[index]);
     printer.id = this.unique(printer.id, id);
     const printers = [...this.config.printers];

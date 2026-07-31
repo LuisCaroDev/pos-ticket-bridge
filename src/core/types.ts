@@ -1,12 +1,39 @@
 import type { BridgeMessage, LanguageSetting } from "../i18n";
 
 export type PrinterType = "network" | "usb" | "bluetooth";
+export type PrinterLanguage = "es" | "en";
+export type UnicodeFallback = "auto" | "raster" | "native";
+export type PrinterCharacterCoverage = "ascii" | "spanish-latin";
+export type ProfileValidation = Partial<
+  Record<
+    PrinterCharacterCoverage,
+    { catalogVersion: number; confirmedAt: string }
+  >
+>;
+export type CustomPrintProfile = {
+  encoding: string;
+  codeTable: number;
+  unicodeFallback: UnicodeFallback;
+  /** Keeps the automatic profile's safe Unicode rule after customization. */
+  automaticUnicodePolicy?: "encoding" | "ascii";
+};
+export type PrintProfile = {
+  language: PrinterLanguage;
+  mode: "auto" | "custom";
+  /** Catalog profile chosen for automatic mode. */
+  profileId?: string;
+  /** Visual confirmations for the selected profile's character coverage. */
+  validation?: ProfileValidation;
+  custom?: CustomPrintProfile;
+};
 export type Printer = {
   id: string;
   nombre: string;
   tipo: PrinterType;
   anchoMm: 58 | 80;
-  codepage: string;
+  /** Optional make/model entered for an anonymous compatibility report. */
+  reportedModel?: string;
+  printProfile: PrintProfile;
   abreCajon: boolean;
   enabled: boolean;
   connection: Record<string, string | number | undefined>;
@@ -41,6 +68,8 @@ export type PrintJob = {
 };
 export type Diagnostic = {
   printerId: string;
+  /** Identifies diagnostics created while a new printer is still a draft. */
+  draftSessionId?: string;
   operation: string;
   startedAt: string;
   finishedAt?: string;

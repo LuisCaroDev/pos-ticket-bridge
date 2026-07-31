@@ -78,6 +78,10 @@ export type TranslationKey =
   | "edit_printer"
   | "add_printer"
   | "check_connection_before_saving"
+  | "connection_section"
+  | "print_profile_section"
+  | "operation_section"
+  | "advanced_printing"
   | "name"
   | "type"
   | "width"
@@ -94,6 +98,16 @@ export type TranslationKey =
   | "cancel"
   | "test_without_saving"
   | "save_printer"
+  | "validation_required"
+  | "validation_port"
+  | "validation_baud_rate"
+  | "validation_vendor_id"
+  | "validation_product_id"
+  | "validation_windows_printer"
+  | "validation_model_length"
+  | "validation_encoding"
+  | "validation_character_table"
+  | "validation_origin"
   | "settings_description"
   | "allowed_origins"
   | "save_settings"
@@ -101,6 +115,46 @@ export type TranslationKey =
   | "language_system"
   | "language_spanish"
   | "language_english"
+  | "printing_language"
+  | "profile_label"
+  | "profile_automatic"
+  | "profile_custom"
+  | "profile_auto_description"
+  | "profile_custom_description"
+  | "encoding"
+  | "character_table"
+  | "custom_character_table"
+  | "custom_character_table_number"
+  | "unicode_strategy"
+  | "unicode_auto"
+  | "unicode_raster"
+  | "unicode_native"
+  | "profile_custom_notice"
+  | "profile_bitmap_fallback"
+  | "profile_native_coverage"
+  | "profile_reset_for_language"
+  | "advanced_profile_notice"
+  | "printer_model"
+  | "search_profiles"
+  | "profile_coverage"
+  | "coverage_ascii"
+  | "coverage_spanish"
+  | "coverage_spanish_pending"
+  | "coverage_bitmap"
+  | "profile_suggested"
+  | "verify_spanish"
+  | "spanish_validation_pending"
+  | "spanish_validation_confirm"
+  | "spanish_validation_confirmed"
+  | "reported_model"
+  | "compatibility_report"
+  | "compatibility_report_description"
+  | "export_report"
+  | "report_exported"
+  | "print_diagnostics"
+  | "no_print_diagnostics"
+  | "diagnostic_cause"
+  | "diagnostic_steps"
   | "test_sent"
   | "tray_open"
   | "tray_copy_token"
@@ -116,6 +170,7 @@ export type TranslationKey =
   | "test_ticket_title"
   | "test_ticket_subtitle"
   | "test_ticket_printer"
+  | "test_ticket_characters"
   | "printer_not_found"
   | "invalid_token"
   | "unsupported_print_block"
@@ -184,6 +239,10 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     edit_printer: "Editar {name}",
     add_printer: "Agregar impresora",
     check_connection_before_saving: "Comprueba la conexión antes de guardarla.",
+    connection_section: "Conexión",
+    print_profile_section: "Perfil de impresión",
+    operation_section: "Operación",
+    advanced_printing: "Opciones avanzadas de impresión",
     name: "Nombre",
     type: "Tipo",
     width: "Ancho",
@@ -200,6 +259,16 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     cancel: "Cancelar",
     test_without_saving: "Probar sin guardar",
     save_printer: "Guardar impresora",
+    validation_required: "Este campo es obligatorio.",
+    validation_port: "Ingresa un puerto entre 1 y 65535.",
+    validation_baud_rate: "Ingresa una velocidad válida.",
+    validation_vendor_id: "Ingresa el Vendor ID.",
+    validation_product_id: "Ingresa el Product ID.",
+    validation_windows_printer: "Selecciona una impresora instalada en Windows.",
+    validation_model_length: "El modelo no puede superar 160 caracteres.",
+    validation_encoding: "Selecciona una codificación.",
+    validation_character_table: "La tabla debe estar entre 0 y 255.",
+    validation_origin: "Ingresa un origen HTTP o HTTPS sin ruta.",
     settings_description:
       "Configura el servicio local y los orígenes autorizados.",
     allowed_origins: "Orígenes autorizados",
@@ -208,6 +277,55 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     language_system: "Sistema",
     language_spanish: "Español",
     language_english: "English",
+    printing_language: "Idioma de impresión",
+    profile_label: "Perfil: {profile}",
+    profile_automatic: "Perfil automático",
+    profile_custom: "personalizado",
+    profile_auto_description:
+      "El bridge elegirá el modo más seguro para esta impresora y este idioma.",
+    profile_custom_description:
+      "Esta impresora conserva tus ajustes técnicos y no recibe cambios del perfil automático.",
+    encoding: "Codificación",
+    character_table: "Tabla de caracteres ESC/POS",
+    custom_character_table: "Personalizada…",
+    custom_character_table_number: "Número de tabla personalizado",
+    unicode_strategy: "Caracteres Unicode",
+    unicode_auto: "Automático según el perfil",
+    unicode_raster: "Usar bitmap para todo el texto",
+    unicode_native: "Usar solo texto nativo",
+    profile_custom_notice:
+      "Los cambios técnicos desactivan las actualizaciones automáticas de este perfil.",
+    profile_bitmap_fallback: "Bitmap seguro para caracteres no garantizados",
+    profile_native_coverage: "Texto nativo según el perfil",
+    profile_reset_for_language:
+      "El idioma cambió; se restauró el perfil automático.",
+    advanced_profile_notice:
+      "Estos valores provienen del modelo seleccionado. Si cambias uno, se guardará un perfil personalizado.",
+    printer_model: "Modelo de impresora",
+    search_profiles: "Buscar modelo verificado…",
+    profile_coverage: "Compatibilidad de texto",
+    coverage_ascii: "ASCII nativo",
+    coverage_spanish: "Español latino verificado",
+    coverage_spanish_pending: "Español requiere verificación",
+    coverage_bitmap: "Bitmap para caracteres no verificados",
+    profile_suggested: "Perfil sugerido por USB",
+    verify_spanish: "Verificar caracteres españoles",
+    spanish_validation_pending:
+      "Imprime la prueba y confirma solo si todos los caracteres españoles se leen correctamente.",
+    spanish_validation_confirm: "Los caracteres se ven correctos",
+    spanish_validation_confirmed:
+      "La compatibilidad de caracteres españoles quedó confirmada para esta impresora.",
+    reported_model: "Marca y modelo para el reporte (opcional)",
+    compatibility_report: "Reporte de compatibilidad",
+    compatibility_report_description:
+      "No incluye IP, token, número de serie, nombre de impresora ni contenido de tickets.",
+    export_report: "Copiar y descargar reporte",
+    report_exported: "Reporte de compatibilidad copiado y descargado.",
+    print_diagnostics: "Diagnóstico de impresión",
+    no_print_diagnostics:
+      "Aún no hay diagnósticos para esta impresora desde que se inició el bridge.",
+    diagnostic_cause: "Causa técnica",
+    diagnostic_steps: "Etapas registradas",
     test_sent:
       "Ticket de prueba enviado. Puedes guardar la impresora cuando estés conforme.",
     tray_open: "Abrir POS Ticket Bridge",
@@ -226,6 +344,7 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     test_ticket_title: "POS TICKET BRIDGE",
     test_ticket_subtitle: "Prueba de impresión",
     test_ticket_printer: "Impresora: {name}",
+    test_ticket_characters: "Caracteres: áéíóúüñÑ ¿¡ €",
     printer_not_found: "No se encontró la impresora {printerId}.",
     invalid_token: "Token de acceso no válido.",
     unsupported_print_block: "El bloque de impresión {type} no es compatible.",
@@ -297,6 +416,10 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     edit_printer: "Edit {name}",
     add_printer: "Add printer",
     check_connection_before_saving: "Check the connection before saving it.",
+    connection_section: "Connection",
+    print_profile_section: "Print profile",
+    operation_section: "Operation",
+    advanced_printing: "Advanced printing options",
     name: "Name",
     type: "Type",
     width: "Width",
@@ -313,6 +436,16 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     cancel: "Cancel",
     test_without_saving: "Test without saving",
     save_printer: "Save printer",
+    validation_required: "This field is required.",
+    validation_port: "Enter a port between 1 and 65535.",
+    validation_baud_rate: "Enter a valid baud rate.",
+    validation_vendor_id: "Enter the Vendor ID.",
+    validation_product_id: "Enter the Product ID.",
+    validation_windows_printer: "Select a printer installed in Windows.",
+    validation_model_length: "The model cannot exceed 160 characters.",
+    validation_encoding: "Select an encoding.",
+    validation_character_table: "The table must be between 0 and 255.",
+    validation_origin: "Enter an HTTP or HTTPS origin without a path.",
     settings_description: "Configure the local service and allowed origins.",
     allowed_origins: "Allowed origins",
     save_settings: "Save settings",
@@ -320,6 +453,55 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     language_system: "System",
     language_spanish: "Español",
     language_english: "English",
+    printing_language: "Print language",
+    profile_label: "Profile: {profile}",
+    profile_automatic: "Automatic profile",
+    profile_custom: "custom",
+    profile_auto_description:
+      "The bridge will choose the safest mode for this printer and language.",
+    profile_custom_description:
+      "This printer keeps your technical settings and does not receive automatic profile changes.",
+    encoding: "Encoding",
+    character_table: "ESC/POS character table",
+    custom_character_table: "Custom…",
+    custom_character_table_number: "Custom table number",
+    unicode_strategy: "Unicode characters",
+    unicode_auto: "Automatic for this profile",
+    unicode_raster: "Use bitmap for all text",
+    unicode_native: "Use native text only",
+    profile_custom_notice:
+      "Technical changes disable automatic updates for this profile.",
+    profile_bitmap_fallback: "Safe bitmap for unsupported characters",
+    profile_native_coverage: "Native text for this profile",
+    profile_reset_for_language:
+      "The language changed; the automatic profile was restored.",
+    advanced_profile_notice:
+      "These values come from the selected model. Changing one saves a custom profile.",
+    printer_model: "Printer model",
+    search_profiles: "Search verified model…",
+    profile_coverage: "Text compatibility",
+    coverage_ascii: "Native ASCII",
+    coverage_spanish: "Verified Spanish Latin",
+    coverage_spanish_pending: "Spanish needs verification",
+    coverage_bitmap: "Bitmap for unverified characters",
+    profile_suggested: "USB suggested profile",
+    verify_spanish: "Verify Spanish characters",
+    spanish_validation_pending:
+      "Print the test and confirm only if every Spanish character is readable.",
+    spanish_validation_confirm: "Characters look correct",
+    spanish_validation_confirmed:
+      "Spanish character compatibility is confirmed for this printer.",
+    reported_model: "Make and model for the report (optional)",
+    compatibility_report: "Compatibility report",
+    compatibility_report_description:
+      "It does not include IP, token, serial number, printer name, or ticket contents.",
+    export_report: "Copy and download report",
+    report_exported: "Compatibility report copied and downloaded.",
+    print_diagnostics: "Print diagnostics",
+    no_print_diagnostics:
+      "No diagnostics have been recorded for this printer since the bridge started.",
+    diagnostic_cause: "Technical cause",
+    diagnostic_steps: "Recorded stages",
     test_sent:
       "Test ticket sent. You can save the printer when you are satisfied.",
     tray_open: "Open POS Ticket Bridge",
@@ -338,6 +520,7 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     test_ticket_title: "POS TICKET BRIDGE",
     test_ticket_subtitle: "Print test",
     test_ticket_printer: "Printer: {name}",
+    test_ticket_characters: "Characters: ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     printer_not_found: "Printer {printerId} was not found.",
     invalid_token: "Invalid access token.",
     unsupported_print_block: "Print block {type} is not supported.",
@@ -388,6 +571,7 @@ export const testPrintTexts = (language: SupportedLanguage, name: string) => ({
   title: t(language, "test_ticket_title"),
   subtitle: t(language, "test_ticket_subtitle"),
   printer: t(language, "test_ticket_printer", { name }),
+  characters: t(language, "test_ticket_characters"),
   imageOmitted: t(language, "image_omitted"),
 });
 export type TestPrintTexts = ReturnType<typeof testPrintTexts>;

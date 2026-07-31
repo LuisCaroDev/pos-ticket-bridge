@@ -15,6 +15,8 @@ import {
   discoverNetwork,
   discoverUsb,
 } from "./discovery";
+import { publicPrintProfile, resolvePrintProfile } from "./printer-profiles";
+import { PROFILE_CATALOG_VERSION } from "./printer-profile-catalog";
 import { openDrawer, printJob, testPrint } from "./printer";
 import type { Diagnostic, Printer } from "./types";
 
@@ -71,17 +73,19 @@ export function createBridgeServer(
     port: store.get().port,
     language: store.get().language,
     activeLanguage: getActiveLanguage(),
+    profileCatalogVersion: PROFILE_CATALOG_VERSION,
     allowedOrigins: store.get().allowedOrigins,
     configPath: store.path(),
     token: store.get().token,
     suggestedHosts: suggestedHosts(store.get().port),
     configured: store.configured(),
-    diagnostics: diagnostics.slice(0, 20),
+    diagnostics,
     printers: await Promise.all(
       store.get().printers.map(async (printer) => ({
         ...printer,
         runtime: {
           connection: await checkConnection(printer),
+          printProfile: publicPrintProfile(resolvePrintProfile(printer)),
           lastTest: lastTests.get(printer.id) || null,
           lastDiagnostic:
             diagnostics.find((item) => item.printerId === printer.id) || null,
@@ -95,9 +99,11 @@ export function createBridgeServer(
     work: (hooks: {
       onEvent: (stage: string, detail?: Record<string, unknown>) => void;
     }) => Promise<void>,
+    draftSessionId?: string,
   ) => {
     const entry: Diagnostic = {
       printerId: printer.id,
+      ...(draftSessionId ? { draftSessionId } : {}),
       operation: operationName,
       startedAt: new Date().toISOString(),
       ok: false,
@@ -112,16 +118,67 @@ export function createBridgeServer(
       await work(hooks);
       entry.ok = true;
       entry.message = message("operation_completed");
+      return entry;
     } catch (error) {
       entry.message = errorPayload(error);
       entry.cause = error instanceof Error ? error.message : String(error);
+      (error as Error & { diagnostic?: Diagnostic }).diagnostic = entry;
       throw error;
     } finally {
       entry.finishedAt = new Date().toISOString();
       entry.durationMs = Date.now() - started;
       diagnostics.unshift(entry);
-      diagnostics.splice(50);
     }
+  };
+  const testPrinter = async (
+    input: Printer,
+    options: {
+      draftSessionId?: string;
+      operation?: "test-draft" | "spanish-validation";
+    } = {},
+  ) => {
+    const printer: Printer = {
+      ...input,
+      id: input.id || `draft:${options.draftSessionId || "printer"}`,
+    };
+    try {
+      const diagnostic = await operation(
+        printer,
+        options.operation || "test-draft",
+        (hooks) =>
+          testPrint(
+            printer,
+            testPrintTexts(
+              printer.printProfile?.language === "en" ? "en" : "es",
+              printer.nombre || "",
+            ),
+            hooks,
+          ),
+        options.draftSessionId,
+      );
+      return { ok: true, diagnostic };
+    } catch (error) {
+      return {
+        ok: false,
+        error: errorPayload(error),
+        diagnostic: (error as Error & { diagnostic?: Diagnostic }).diagnostic,
+      };
+    }
+  };
+  const discardDraftDiagnostics = (draftSessionId: string) => {
+    for (let index = diagnostics.length - 1; index >= 0; index -= 1)
+      if (diagnostics[index].draftSessionId === draftSessionId)
+        diagnostics.splice(index, 1);
+  };
+  const promoteDraftDiagnostics = (
+    draftSessionId: string,
+    printerId: string,
+  ) => {
+    for (const diagnostic of diagnostics)
+      if (diagnostic.draftSessionId === draftSessionId) {
+        diagnostic.printerId = printerId;
+        delete diagnostic.draftSessionId;
+      }
   };
   const test = async (id: string) => {
     const printer = store.find(id);
@@ -129,7 +186,7 @@ export function createBridgeServer(
       await operation(printer, "test-print", (hooks) =>
         testPrint(
           printer,
-          testPrintTexts(getActiveLanguage(), printer.nombre),
+          testPrintTexts(printer.printProfile.language, printer.nombre),
           hooks,
         ),
       );
@@ -270,6 +327,9 @@ export function createBridgeServer(
     app,
     store,
     status,
+    testPrinter,
+    discardDraftDiagnostics,
+    promoteDraftDiagnostics,
     start: async () => app.listen({ port: store.get().port, host: "0.0.0.0" }),
     stop: () => app.close(),
   };

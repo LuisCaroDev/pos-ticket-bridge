@@ -4,9 +4,23 @@ import net from "node:net";
 import os from "node:os";
 import { promisify } from "node:util";
 import { message } from "../i18n";
+import {
+  defaultAutomaticProfileId,
+  defaultPrinterLanguage,
+} from "./printer-profiles";
 import type { Printer } from "./types";
 
+const defaultPrintProfile = () => ({
+  language: defaultPrinterLanguage(),
+  mode: "auto" as const,
+  profileId: defaultAutomaticProfileId(),
+});
+
 const exec = promisify(execFile);
+const NETWORK_PROBE_TIMEOUT_MS = 700;
+const NETWORK_DISCOVERY_RETRY_DELAY_MS = 100;
+const NETWORK_DISCOVERY_CONCURRENCY = 64;
+
 const probe = (host: string, port: number) =>
   new Promise<boolean>((resolve) => {
     const socket = new net.Socket();
@@ -14,12 +28,21 @@ const probe = (host: string, port: number) =>
       socket.destroy();
       resolve(ok);
     };
-    socket.setTimeout(300);
+    socket.setTimeout(NETWORK_PROBE_TIMEOUT_MS);
     socket.once("connect", () => end(true));
     socket.once("timeout", () => end(false));
     socket.once("error", () => end(false));
     socket.connect(port, host);
   });
+
+const wait = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+async function probeForDiscovery(host: string, port: number) {
+  if (await probe(host, port)) return true;
+  await wait(NETWORK_DISCOVERY_RETRY_DELAY_MS);
+  return probe(host, port);
+}
 
 export async function discoverNetwork() {
   const candidates = Object.values(os.networkInterfaces())
@@ -35,11 +58,17 @@ export async function discoverNetwork() {
       ).filter((host) => host !== item.address);
     });
   const items: Printer[] = [];
-  for (let index = 0; index < candidates.length; index += 40) {
+  for (
+    let index = 0;
+    index < candidates.length;
+    index += NETWORK_DISCOVERY_CONCURRENCY
+  ) {
     const active = await Promise.all(
       candidates
-        .slice(index, index + 40)
-        .map(async (host) => ((await probe(host, 9100)) ? host : null)),
+        .slice(index, index + NETWORK_DISCOVERY_CONCURRENCY)
+        .map(async (host) =>
+          (await probeForDiscovery(host, 9100)) ? host : null,
+        ),
     );
     active.filter(Boolean).forEach((host) =>
       items.push({
@@ -47,7 +76,7 @@ export async function discoverNetwork() {
         nombre: host!,
         tipo: "network",
         anchoMm: 80,
-        codepage: "CP850",
+        printProfile: defaultPrintProfile(),
         abreCajon: false,
         enabled: true,
         connection: { host: host!, port: 9100 },
@@ -94,7 +123,7 @@ async function discoverMacUsb() {
         `USB ${index + 1}`,
       tipo: "usb" as const,
       anchoMm: 80 as const,
-      codepage: "CP850",
+      printProfile: defaultPrintProfile(),
       abreCajon: false,
       enabled: true,
       connection: {
@@ -135,7 +164,7 @@ export async function discoverUsb() {
       nombre: printer.Name,
       tipo: "usb" as const,
       anchoMm: 80 as const,
-      codepage: "CP850",
+      printProfile: defaultPrintProfile(),
       abreCajon: false,
       enabled: true,
       connection: { systemPrinter: printer.Name, port: printer.PortName },
@@ -159,7 +188,7 @@ export async function discoverBluetooth() {
         nombre: port.friendlyName || port.manufacturer || port.path,
         tipo: "bluetooth" as const,
         anchoMm: 80 as const,
-        codepage: "CP850",
+        printProfile: defaultPrintProfile(),
         abreCajon: false,
         enabled: true,
         connection: {
