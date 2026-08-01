@@ -26,16 +26,36 @@ contextBridge.exposeInMainWorld("bridge", {
     invoke("bridge:printer-profiles", input),
   compatibilityReport: (input: unknown, diagnostic?: unknown) =>
     invoke("bridge:compatibility-report", input, diagnostic),
+  exportLocalProfile: (input: unknown) =>
+    invoke("bridge:export-local-profile", input),
+  importLocalProfile: (input: unknown) =>
+    invoke("bridge:import-local-profile", input),
+  saveLocalProfile: (input: unknown) =>
+    invoke("bridge:save-local-profile", input),
+  deleteLocalProfile: (id: string) => invoke("bridge:delete-local-profile", id),
+  validateCharacterProfileTestSet: (input: unknown) =>
+    invoke("bridge:validate-character-profile-test-set", input),
   request: (route: string, method?: string, body?: unknown) =>
     invoke("bridge:request", route, method, body),
   testPrinter: (
     input: unknown,
     options?: {
       draftSessionId?: string;
-      operation?: "test-draft" | "spanish-validation";
     },
   ) => invoke("bridge:test-printer", input, options),
+  runCharacterProfileTrial: (
+    input: unknown,
+    candidate: { id: string; encoding: string; codeTable: number },
+    draftSessionId?: string,
+  ) =>
+    invoke(
+      "bridge:run-character-profile-trial",
+      input,
+      candidate,
+      draftSessionId,
+    ),
   discardDraftDiagnostics: (draftSessionId: string) =>
     invoke("bridge:discard-draft-diagnostics", draftSessionId),
   copy: (value: string) => invoke("bridge:copy", value),
+  paste: () => invoke("bridge:paste"),
 });

@@ -1,12 +1,50 @@
-import { memo, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+} from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, type FieldPath, type Resolver } from "react-hook-form";
-import { Clipboard, Loader2, XIcon } from "lucide-react";
-import { translateMessage, type TranslationKey } from "@/i18n";
+import {
+  ClipboardPaste,
+  Clipboard,
+  CircleHelp,
+  Download,
+  Loader2,
+  Plus,
+  Save,
+  ScrollText,
+  Share2,
+  Settings2,
+  Trash2,
+  Upload,
+  XIcon,
+} from "lucide-react";
+import { type TranslationKey } from "@/i18n";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FormField, FormInfoPanel, FormSection } from "@/components/ui/form";
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from "@/components/ui/field";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Combobox,
+  ComboboxCollection,
   ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxGroupLabel,
   ComboboxInput,
   ComboboxInputGroup,
   ComboboxItem,
@@ -25,19 +63,27 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { LanguageSelect } from "./LanguageSelect";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  type CharacterProfileCandidate,
+  type CharacterProfileTestSet,
+} from "@/core/character-profile-tests";
 import { useBridge } from "@/contexts/BridgeContext";
 import { useI18n } from "@/contexts/I18nContext";
+import { usePrintDiagnostics } from "@/contexts/PrintDiagnosticsContext";
 import { printerFormSchema, printerTransportSchema } from "./form-validation";
 import type { PrinterForm, ProfileValues } from "./types";
+import { CharacterProfileAssistant } from "./CharacterProfileAssistant";
 
 const encodingPresets = [
   { encoding: "CP437", codeTable: 0 },
@@ -58,48 +104,175 @@ const selectedCharacterTable = (codeTable: number, customSelected = false) =>
   characterTablePresets.some((item) => item.value === codeTable)
     ? String(codeTable)
     : "custom";
-const diagnosticDetails = (entry: Record<string, unknown>) =>
-  Object.entries(entry)
-    .filter(([key]) => key !== "at" && key !== "stage")
-    .map(([key, value]) => `${key}: ${String(value)}`)
-    .join(" · ");
-
+function AdvancedFieldLabel({
+  children,
+  help,
+}: {
+  children: string;
+  help: string;
+}) {
+  return (
+    <FieldTitle>
+      {children}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={help}
+            />
+          }
+        >
+          <CircleHelp />
+        </TooltipTrigger>
+        <TooltipContent>{help}</TooltipContent>
+      </Tooltip>
+    </FieldTitle>
+  );
+}
 type PrinterEditorPanelProps = {
   form?: PrinterForm;
   detected: boolean;
   diagnostics: any[];
-  draftDiagnostic: any;
   profileCatalog: any;
   isWindows: boolean;
   onClose: () => void;
   onFormChange: (form: PrinterForm) => void;
   onClearDraftDiagnostic: () => void;
-  onTest: (operation: "test-draft" | "spanish-validation") => void;
-  onConfirmSpanish: (catalogVersion: number) => void;
-  onExportReport: () => void;
+  onTest: () => void;
+  onRunCharacterProfileTrial: (
+    candidate: CharacterProfileCandidate,
+  ) => Promise<boolean>;
+  onValidateCharacterProfileTestSet: (
+    testSet: CharacterProfileTestSet,
+  ) => Promise<CharacterProfileTestSet | undefined>;
+  onSaveLocalProfile: (input: unknown) => Promise<any>;
+  onExportLocalProfile: (target: "clipboard" | "file") => Promise<boolean>;
+  onImportLocalProfile: (input: unknown) => Promise<boolean>;
+  onPasteLocalProfile: () => Promise<boolean>;
+  onDeleteLocalProfile: (id: string) => Promise<boolean>;
   onSave: () => void;
+};
+
+type LocalProfileOption = {
+  language?: "es" | "en";
+  widthMm?: 58 | 80;
+  values?: ProfileValues;
+};
+
+const exclusiveProfileWidth = (profile: any): 58 | 80 | undefined => {
+  if (profile.local || typeof profile.name === "string") return profile.widthMm;
+  return Array.isArray(profile.paperWidths) && profile.paperWidths.length === 1
+    ? profile.paperWidths[0]
+    : undefined;
+};
+
+export const profileDisplayName = (
+  profile: any,
+  language: "es" | "en",
+  formatWidth: (width: 58 | 80) => string,
+) => {
+  const name =
+    profile.local || typeof profile.name === "string"
+      ? String(profile.name || profile.id)
+      : profile.name?.[language] || profile.name?.en || profile.id;
+  const width = exclusiveProfileWidth(profile);
+  if (!width) return name;
+  return `${name.replace(/\s+-\s+(?:58|80)\s*mm$/i, "")}${formatWidth(width)}`;
+};
+
+export const filterProfilesForPrintLanguage = (
+  profiles: any[],
+  localProfiles: LocalProfileOption[],
+  language: PrinterForm["printProfile"]["language"],
+  paperWidth?: 58 | 80,
+) => {
+  const catalogProfiles = profiles.filter((profile: any) => {
+    if (
+      paperWidth &&
+      Array.isArray(profile.paperWidths) &&
+      !profile.paperWidths.includes(paperWidth)
+    )
+      return false;
+    if (language === "en")
+      return (
+        profile.ascii ||
+        profile.verifiedCoverage?.includes("ascii") ||
+        profile.verifiedCoverage === undefined
+      );
+    return (
+      profile.spanishLatin ||
+      profile.supportsRaster ||
+      profile.verifiedCoverage?.includes("spanish-latin") ||
+      profile.verifiedCoverage === undefined
+    );
+  });
+  return [
+    ...catalogProfiles,
+    ...localProfiles.filter(
+      (profile) =>
+        profile.language === language &&
+        (!paperWidth || profile.widthMm === paperWidth),
+    ),
+  ];
+};
+
+export const hasUnsavedCustomProfile = (
+  printProfile: PrinterForm["printProfile"] | undefined,
+  selectedLocalProfile?: LocalProfileOption,
+) => {
+  if (printProfile?.mode !== "custom") return false;
+  if (!selectedLocalProfile?.values) return true;
+  return (
+    selectedLocalProfile.values.encoding !== printProfile.custom?.encoding ||
+    selectedLocalProfile.values.codeTable !== printProfile.custom?.codeTable ||
+    selectedLocalProfile.values.unicodeFallback !==
+      printProfile.custom?.unicodeFallback ||
+    selectedLocalProfile.values.automaticUnicodePolicy !==
+      printProfile.custom?.automaticUnicodePolicy
+  );
 };
 
 export const PrinterEditorPanel = memo(function PrinterEditorPanel({
   form,
   detected,
   diagnostics,
-  draftDiagnostic,
   profileCatalog,
   isWindows,
   onClose,
   onFormChange: onFormUpdate,
   onClearDraftDiagnostic,
   onTest,
-  onConfirmSpanish,
-  onExportReport,
+  onRunCharacterProfileTrial,
+  onValidateCharacterProfileTestSet,
+  onSaveLocalProfile,
+  onExportLocalProfile,
+  onImportLocalProfile,
+  onPasteLocalProfile,
+  onDeleteLocalProfile,
   onSave,
 }: PrinterEditorPanelProps) {
   const { copy, busy, setNotice } = useBridge();
+  const { openDiagnostics } = usePrintDiagnostics();
   const { language, tr } = useI18n();
   const wasOpen = useRef(false);
   const hasAttemptedValidation = useRef(false);
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
+  const [pendingProfileLanguage, setPendingProfileLanguage] = useState<
+    PrinterForm["printProfile"]["language"] | undefined
+  >();
+  const [saveProfileOpen, setSaveProfileOpen] = useState(false);
+  const [profileImportOpen, setProfileImportOpen] = useState(false);
+  const [profileExportOpen, setProfileExportOpen] = useState(false);
+  const [profileManagerOpen, setProfileManagerOpen] = useState(false);
+  const [profileDeletionTarget, setProfileDeletionTarget] = useState<any>();
+  const [profileFileDragging, setProfileFileDragging] = useState(false);
+  const [profileBrand, setProfileBrand] = useState("");
+  const [profileModel, setProfileModel] = useState("");
+  const [profileIdentityError, setProfileIdentityError] = useState(false);
+  const profileImportInputRef = useRef<HTMLInputElement>(null);
   const {
     reset,
     handleSubmit,
@@ -163,7 +336,7 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
   const testDraft = () => {
     if (!form) return;
     const result = printerTransportSchema(isWindows).safeParse(form);
-    if (result.success) return onTest("test-draft");
+    if (result.success) return onTest();
     hasAttemptedValidation.current = true;
     result.error.issues.forEach((issue) =>
       setError(issue.path.join(".") as FieldPath<PrinterForm>, {
@@ -172,13 +345,69 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
       }),
     );
   };
+  const runCharacterProfileTrial = async (
+    candidate: CharacterProfileCandidate,
+  ) => {
+    if (!form) return false;
+    const result = printerTransportSchema(isWindows).safeParse(form);
+    if (result.success) return onRunCharacterProfileTrial(candidate);
+    hasAttemptedValidation.current = true;
+    result.error.issues.forEach((issue) =>
+      setError(issue.path.join(".") as FieldPath<PrinterForm>, {
+        type: "manual",
+        message: issue.message,
+      }),
+    );
+    return false;
+  };
   const profiles = profileCatalog.profiles || [];
+  const localProfiles = profileCatalog.localProfiles || [];
   const selectedCatalogProfile =
     form?.printProfile.mode === "auto"
       ? profiles.find(
           (profile: any) => profile.id === form.printProfile.profileId,
         )
       : undefined;
+  const selectedLocalProfile =
+    form?.printProfile.mode === "custom"
+      ? localProfiles.find(
+          (profile: any) => profile.id === form.printProfile.localProfileId,
+        )
+      : undefined;
+  const selectedModelProfile = selectedCatalogProfile || selectedLocalProfile;
+  const displayProfileName = (profile: any) =>
+    profileDisplayName(profile, language, (width) =>
+      tr("profile_width", { width }),
+    );
+  const availableProfiles = form
+    ? filterProfilesForPrintLanguage(
+        profiles,
+        localProfiles,
+        form.printProfile.language,
+        form.anchoMm,
+      )
+    : [];
+  const profileGroups = Object.values(
+    availableProfiles.reduce(
+      (
+        groups: Record<string, { value: string; items: any[] }>,
+        profile: any,
+      ) => {
+        const label =
+          profile.brand ||
+          (profile.id === "unlisted-safe"
+            ? tr("profile_brand_generic")
+            : String(
+                profile.name?.[language] || profile.name?.en || profile.id,
+              ).split(/\s+/)[0]);
+        const group = groups[label] || { value: label, items: [] };
+        group.items.push(profile);
+        groups[label] = group;
+        return groups;
+      },
+      {},
+    ),
+  ).sort((left, right) => left.value.localeCompare(right.value, language));
   const automaticProfileValues: ProfileValues = (() => {
     const values =
       form?.printProfile.language === "es" &&
@@ -196,31 +425,87 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
     form?.printProfile.mode === "custom" && form
       ? form.printProfile.custom || automaticProfileValues
       : automaticProfileValues;
-  const spanishValidated = Boolean(
-    form?.printProfile.validation?.["spanish-latin"] &&
-    Number(form.printProfile.validation?.["spanish-latin"]?.catalogVersion) ===
-      Number(selectedCatalogProfile?.version),
+  const customProfileNeedsSaving = hasUnsavedCustomProfile(
+    form?.printProfile,
+    selectedLocalProfile,
   );
-  const canConfirmSpanish = Boolean(
-    form?.printProfile.mode === "auto" &&
-    form.printProfile.language === "es" &&
-    selectedCatalogProfile?.verifiedCoverage?.includes("spanish-latin") &&
-    draftDiagnostic?.ok &&
-    !spanishValidated,
-  );
+  const canEditAdvancedProfile = form?.printProfile.mode === "custom";
+
+  const applyAutomaticProfileForLanguage = (
+    profileLanguage: PrinterForm["printProfile"]["language"],
+  ) => {
+    if (!form) return;
+    onFormChange({
+      ...form,
+      customCharacterTable: false,
+      printProfile: {
+        language: profileLanguage,
+        mode: "auto",
+        profileId:
+          form.printProfile.mode === "auto"
+            ? form.printProfile.profileId || "unlisted-safe"
+            : "unlisted-safe",
+      },
+    });
+    onClearDraftDiagnostic();
+    setNotice(tr("profile_reset_for_language"));
+  };
+  const updatePaperWidth = (paperWidth: 58 | 80) => {
+    if (!form) return;
+    const selectedProfile =
+      form.printProfile.mode === "auto"
+        ? profiles.find(
+            (profile: any) => profile.id === form.printProfile.profileId,
+          )
+        : selectedLocalProfile;
+    const selectedProfileSupportsWidth =
+      form.printProfile.mode === "custom"
+        ? selectedProfile.widthMm === paperWidth
+        : !Array.isArray(selectedProfile?.paperWidths) ||
+          selectedProfile.paperWidths.includes(paperWidth);
+    onFormChange({
+      ...form,
+      anchoMm: paperWidth,
+      printProfile: selectedProfileSupportsWidth
+        ? form.printProfile
+        : {
+            language: form.printProfile.language,
+            mode: "auto",
+            profileId: "unlisted-safe",
+          },
+    });
+    if (!selectedProfileSupportsWidth) onClearDraftDiagnostic();
+  };
+  const requestProfileLanguageChange = (
+    profileLanguage: PrinterForm["printProfile"]["language"],
+  ) => {
+    if (!form || profileLanguage === form.printProfile.language) return;
+    if (customProfileNeedsSaving) {
+      setPendingProfileLanguage(profileLanguage);
+      return;
+    }
+    applyAutomaticProfileForLanguage(profileLanguage);
+  };
 
   const updateAdvancedProfile = (
     change: Partial<ProfileValues>,
     customCharacterTable = form?.customCharacterTable || false,
   ) => {
-    if (!form) return;
+    if (!form || !canEditAdvancedProfile) return;
     onFormChange({
       ...form,
       customCharacterTable,
       printProfile: {
         language: form.printProfile.language,
         mode: "custom",
-        custom: { ...advancedProfileValues, ...change },
+        custom: {
+          ...advancedProfileValues,
+          ...change,
+          confirmation: undefined,
+        },
+        ...(form.printProfile.localProfileId
+          ? { localProfileId: form.printProfile.localProfileId }
+          : {}),
       },
     });
     onClearDraftDiagnostic();
@@ -232,6 +517,132 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
     }
     onClose();
   };
+  const confirmCharacterProfile = async (
+    testSet: CharacterProfileTestSet,
+    candidate: CharacterProfileCandidate,
+  ) => {
+    if (!form?.reportedBrand?.trim() || !form.reportedModel?.trim()) {
+      setNotice(tr("character_profile_model_required"));
+      return false;
+    }
+    const profile = await onSaveLocalProfile({
+      brand: form.reportedBrand.trim(),
+      model: form.reportedModel.trim(),
+      language: "es",
+      widthMm: form.anchoMm,
+      values: {
+        encoding: candidate.encoding,
+        codeTable: candidate.codeTable,
+        unicodeFallback: "auto",
+        automaticUnicodePolicy: "encoding",
+        confirmation: {
+          confirmedAt: new Date().toISOString(),
+          testSetName: testSet.name,
+          candidateId: candidate.id,
+        },
+      },
+    });
+    if (!profile) return false;
+    onFormChange({
+      ...form,
+      reportedBrand: profile.brand,
+      reportedModel: profile.model,
+      printProfile: {
+        language: profile.language,
+        mode: "custom",
+        custom: { ...profile.values },
+        localProfileId: profile.id,
+      },
+    });
+    setNotice(tr("character_profile_confirmed"));
+    return true;
+  };
+  const createCustomProfile = () => {
+    if (!form) return;
+    onFormChange({
+      ...form,
+      printProfile: {
+        language: form.printProfile.language,
+        mode: "custom",
+        custom: { ...advancedProfileValues },
+      },
+      customCharacterTable: false,
+    });
+    onClearDraftDiagnostic();
+  };
+  const openSaveProfile = () => {
+    if (!form) return;
+    setProfileBrand(selectedLocalProfile?.brand || form.reportedBrand || "");
+    setProfileModel(selectedLocalProfile?.model || form.reportedModel || "");
+    setProfileIdentityError(false);
+    setSaveProfileOpen(true);
+  };
+  const saveCustomProfile = async () => {
+    if (!form || !profileBrand.trim() || !profileModel.trim()) {
+      setProfileIdentityError(true);
+      return;
+    }
+    const profile = await onSaveLocalProfile({
+      brand: profileBrand.trim(),
+      model: profileModel.trim(),
+      language: form.printProfile.language,
+      widthMm: form.anchoMm,
+      values: { ...advancedProfileValues },
+    });
+    if (!profile) return;
+    onFormChange({
+      ...form,
+      reportedBrand: profile.brand,
+      reportedModel: profile.model,
+      printProfile: {
+        language: profile.language,
+        mode: "custom",
+        custom: { ...profile.values },
+        localProfileId: profile.id,
+      },
+    });
+    setSaveProfileOpen(false);
+  };
+  const importLocalProfileText = async (content: string) => {
+    try {
+      if (!(await onImportLocalProfile(JSON.parse(content)))) {
+        setNotice(tr("local_profile_import_error"));
+        return false;
+      }
+      setProfileImportOpen(false);
+      return true;
+    } catch {
+      setNotice(tr("local_profile_import_error"));
+      return false;
+    }
+  };
+  const importLocalProfile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) await importLocalProfileText(await file.text());
+  };
+  const pasteLocalProfile = async () => {
+    try {
+      if (!(await onPasteLocalProfile())) {
+        setNotice(tr("local_profile_import_error"));
+        return;
+      }
+      setProfileImportOpen(false);
+    } catch {
+      setNotice(tr("local_profile_import_error"));
+    }
+  };
+  const importDroppedLocalProfile = async (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setProfileFileDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) await importLocalProfileText(await file.text());
+  };
+  const deleteManagedProfile = async () => {
+    if (!profileDeletionTarget) return;
+    if (await onDeleteLocalProfile(profileDeletionTarget.id))
+      setProfileDeletionTarget(undefined);
+  };
 
   if (!form) return null;
 
@@ -242,12 +653,12 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
       className="relative flex h-full w-full max-w-2xl min-w-0 flex-col bg-popover text-sm text-popover-foreground"
     >
       <header className="shrink-0 border-b px-6 py-5 pr-12">
-        <h2 className="text-base leading-none font-medium">
+        <h2 className="text-lg font-semibold tracking-tight">
           {form?.id
             ? tr("edit_printer", { name: form.nombre })
             : tr("add_printer")}
         </h2>
-        <p className="text-sm text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           {tr("check_connection_before_saving")}
         </p>
       </header>
@@ -266,7 +677,7 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
           data-slot="printer-form-body"
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 [scrollbar-gutter:stable]"
         >
-          <div className="space-y-6">
+          <div className="flex flex-col gap-6">
             {detected && (
               <p
                 role="status"
@@ -275,7 +686,7 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                 {tr("detected_connection_notice")}
               </p>
             )}
-            <label className="grid gap-1 text-sm font-medium">
+            <FormField>
               {tr("name")}
               <Input
                 value={form.nombre}
@@ -287,12 +698,11 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
               {error("nombre") && (
                 <p className="text-xs text-destructive">{error("nombre")}</p>
               )}
-            </label>
-            <div className="border-t" />
-            <section className="space-y-3">
-              <h3 className="font-semibold">{tr("connection_section")}</h3>
-              <div className="grid gap-4 md:grid-cols-3">
-                <label className="grid gap-1 text-sm font-medium">
+            </FormField>
+            <Separator />
+            <FormSection title={tr("connection_section")}>
+              <FieldGroup className="grid gap-4 md:grid-cols-3">
+                <FormField>
                   {tr("type")}
                   <Select
                     value={form.tipo}
@@ -304,17 +714,19 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="network">{tr("network")}</SelectItem>
-                      <SelectItem value="usb">USB</SelectItem>
-                      <SelectItem value="bluetooth">
-                        {tr("bluetooth")}
-                      </SelectItem>
+                      <SelectGroup>
+                        <SelectItem value="network">{tr("network")}</SelectItem>
+                        <SelectItem value="usb">USB</SelectItem>
+                        <SelectItem value="bluetooth">
+                          {tr("bluetooth")}
+                        </SelectItem>
+                      </SelectGroup>
                     </SelectContent>
                   </Select>
-                </label>
+                </FormField>
                 {form.tipo === "network" && (
                   <>
-                    <label className="grid gap-1 text-sm font-medium">
+                    <FormField>
                       {tr("host")}
                       <Input
                         value={String(form.connection.host || "")}
@@ -328,8 +740,8 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                           {error("connection.host")}
                         </p>
                       )}
-                    </label>
-                    <label className="grid gap-1 text-sm font-medium">
+                    </FormField>
+                    <FormField>
                       {tr("port")}
                       <Input
                         type="number"
@@ -344,14 +756,14 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                           {error("connection.port")}
                         </p>
                       )}
-                    </label>
+                    </FormField>
                   </>
                 )}
                 {form.tipo === "usb" && (
                   <>
                     {!isWindows && (
                       <>
-                        <label className="grid gap-1 text-sm font-medium">
+                        <FormField>
                           Vendor ID
                           <Input
                             placeholder="0x04b8"
@@ -366,8 +778,8 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                               {error("connection.vendorId")}
                             </p>
                           )}
-                        </label>
-                        <label className="grid gap-1 text-sm font-medium">
+                        </FormField>
+                        <FormField>
                           Product ID
                           <Input
                             placeholder="0x0202"
@@ -387,11 +799,11 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                               {error("connection.productId")}
                             </p>
                           )}
-                        </label>
+                        </FormField>
                       </>
                     )}
                     {isWindows && (
-                      <label className="grid gap-1 text-sm font-medium md:col-span-2">
+                      <FormField className="md:col-span-2">
                         {tr("installed_windows_printer")}
                         <Input
                           placeholder={tr("windows_printer_placeholder")}
@@ -411,12 +823,12 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                             {error("connection.systemPrinter")}
                           </p>
                         )}
-                      </label>
+                      </FormField>
                     )}
                   </>
                 )}
                 {form.tipo === "bluetooth" && (
-                  <label className="grid gap-1 text-sm font-medium md:col-span-2">
+                  <FormField className="md:col-span-2">
                     {tr("path")}
                     <Input
                       placeholder="COM5"
@@ -431,121 +843,223 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                         {error("connection.path")}
                       </p>
                     )}
-                  </label>
+                  </FormField>
                 )}
-              </div>
-            </section>
-            <div className="border-t" />
-            <section className="space-y-3">
-              <h3 className="font-semibold">{tr("print_profile_section")}</h3>
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="grid gap-1 text-sm font-medium">
+              </FieldGroup>
+            </FormSection>
+            <Separator />
+            <FormSection title={tr("print_profile_section")}>
+              <FieldGroup className="grid gap-4 md:grid-cols-2">
+                <FormField>
                   {tr("width")}
                   <Select
                     value={String(form.anchoMm)}
+                    items={{ "80": "80 mm", "58": "58 mm" }}
                     onValueChange={(value) =>
-                      onFormChange({
-                        ...form,
-                        anchoMm: Number(value) as 58 | 80,
-                      })
+                      updatePaperWidth(Number(value) as 58 | 80)
                     }
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="80">80 mm</SelectItem>
-                      <SelectItem value="58">58 mm</SelectItem>
+                      <SelectGroup>
+                        <SelectItem value="80">80 mm</SelectItem>
+                        <SelectItem value="58">58 mm</SelectItem>
+                      </SelectGroup>
                     </SelectContent>
                   </Select>
-                </label>
-                <label className="grid gap-1 text-sm font-medium">
-                  {tr("printing_language")}
+                </FormField>
+                <FormField>
+                  <FieldLabel htmlFor="printer-print-language">
+                    {tr("printing_language")}
+                  </FieldLabel>
                   <LanguageSelect
+                    id="printer-print-language"
                     value={form.printProfile.language}
                     tr={tr}
                     onValueChange={(profileLanguage) => {
                       if (profileLanguage === "system") return;
-                      onFormChange({
-                        ...form,
-                        customCharacterTable: false,
-                        printProfile: {
-                          ...form.printProfile,
-                          language: profileLanguage as "es" | "en",
-                          mode: "auto",
-                          profileId:
-                            form.printProfile.profileId || "unlisted-safe",
-                          custom: undefined,
-                          validation: {
-                            ascii: form.printProfile.validation?.ascii,
-                          },
-                        },
-                      });
-                      setNotice(tr("profile_reset_for_language"));
+                      requestProfileLanguageChange(
+                        profileLanguage as "es" | "en",
+                      );
                     }}
                   />
-                </label>
-              </div>
+                </FormField>
+              </FieldGroup>
               <div className="grid gap-2">
-                <div className="grid gap-1 text-sm font-medium">
-                  <span>{tr("printer_model")}</span>
-                  <Combobox
-                    key={`${form.printProfile.mode}:${selectedCatalogProfile?.id || "none"}`}
-                    items={profiles}
-                    value={selectedCatalogProfile || null}
-                    itemToStringLabel={(profile: any) =>
-                      profile.name?.[language] || profile.name?.en || profile.id
-                    }
-                    filter={(profile: any, query: string) => {
-                      const normalizedQuery = query.trim().toLowerCase();
-                      return (
-                        !normalizedQuery ||
-                        [profile.id, profile.name?.en, profile.name?.es].some(
-                          (value) =>
+                <div className="grid gap-1 text-sm font-medium text-foreground">
+                  <span>{tr("print_profile_selector")}</span>
+                  <div className="flex items-center gap-2">
+                    <Combobox
+                      key={`${form.printProfile.mode}:${selectedModelProfile?.id || "none"}`}
+                      className="min-w-0 flex-1"
+                      items={profileGroups}
+                      value={selectedModelProfile || null}
+                      itemToStringLabel={displayProfileName}
+                      filter={(profile: any, query: string) => {
+                        const normalizedQuery = query.trim().toLowerCase();
+                        return (
+                          !normalizedQuery ||
+                          [
+                            profile.id,
+                            profile.brand,
+                            profile.model,
+                            profile.name,
+                            profile.name?.en,
+                            profile.name?.es,
+                          ].some((value) =>
                             String(value || "")
                               .toLowerCase()
                               .includes(normalizedQuery),
-                        )
-                      );
-                    }}
-                    onValueChange={(profile: any | null) => {
-                      if (!profile) return;
-                      onFormChange({
-                        ...form,
-                        printProfile: {
-                          language: form.printProfile.language,
-                          mode: "auto",
-                          profileId: profile.id,
-                        },
-                        customCharacterTable: false,
-                      });
-                      onClearDraftDiagnostic();
-                    }}
-                  >
-                    <ComboboxInputGroup>
-                      <ComboboxInput
-                        aria-label={tr("printer_model")}
-                        placeholder={tr("search_profiles")}
-                      />
-                      <ComboboxTrigger aria-label={tr("printer_model")} />
-                    </ComboboxInputGroup>
-                    <ComboboxPortal>
-                      <ComboboxPositioner>
-                        <ComboboxPopup>
-                          <ComboboxEmpty>{tr("search_profiles")}</ComboboxEmpty>
-                          <ComboboxList>
-                            {(profile: any) => (
-                              <ComboboxItem key={profile.id} value={profile}>
-                                {profile.name?.[language] ||
-                                  profile.name?.en ||
-                                  profile.id}
-                              </ComboboxItem>
-                            )}
-                          </ComboboxList>
-                        </ComboboxPopup>
-                      </ComboboxPositioner>
-                    </ComboboxPortal>
-                  </Combobox>
+                          )
+                        );
+                      }}
+                      onValueChange={(profile: any | null) => {
+                        if (!profile) return;
+                        if (profile.local) {
+                          onFormChange({
+                            ...form,
+                            anchoMm: profile.widthMm || form.anchoMm,
+                            reportedBrand: profile.brand,
+                            reportedModel: profile.model,
+                            printProfile: {
+                              language: profile.language,
+                              mode: "custom",
+                              custom: { ...profile.values },
+                              localProfileId: profile.id,
+                            },
+                            customCharacterTable: false,
+                          });
+                          onClearDraftDiagnostic();
+                          return;
+                        }
+                        onFormChange({
+                          ...form,
+                          printProfile: {
+                            language: form.printProfile.language,
+                            mode: "auto",
+                            profileId: profile.id,
+                          },
+                          customCharacterTable: false,
+                        });
+                        onClearDraftDiagnostic();
+                      }}
+                    >
+                      <ComboboxInputGroup>
+                        <ComboboxInput
+                          aria-label={tr("print_profile_selector")}
+                          placeholder={tr("search_profiles")}
+                        />
+                        <ComboboxTrigger
+                          aria-label={tr("print_profile_selector")}
+                        />
+                      </ComboboxInputGroup>
+                      <ComboboxPortal>
+                        <ComboboxPositioner>
+                          <ComboboxPopup>
+                            <ComboboxEmpty>
+                              {tr("search_profiles")}
+                            </ComboboxEmpty>
+                            <ComboboxList>
+                              {(group: any) => (
+                                <ComboboxGroup
+                                  key={group.value}
+                                  items={group.items}
+                                >
+                                  <ComboboxGroupLabel>
+                                    {group.value}
+                                  </ComboboxGroupLabel>
+                                  <ComboboxCollection>
+                                    {(profile: any) => (
+                                      <ComboboxItem
+                                        key={profile.id}
+                                        value={profile}
+                                      >
+                                        <span className="flex min-w-0 items-center gap-2">
+                                          <span className="truncate">
+                                            {displayProfileName(profile)}
+                                          </span>
+                                          <Badge
+                                            variant={
+                                              profile.local
+                                                ? "secondary"
+                                                : "outline"
+                                            }
+                                          >
+                                            {tr(
+                                              profile.local
+                                                ? "profile_personalized"
+                                                : "profile_verified",
+                                            )}
+                                          </Badge>
+                                        </span>
+                                      </ComboboxItem>
+                                    )}
+                                  </ComboboxCollection>
+                                </ComboboxGroup>
+                              )}
+                            </ComboboxList>
+                          </ComboboxPopup>
+                        </ComboboxPositioner>
+                      </ComboboxPortal>
+                    </Combobox>
+                    <CharacterProfileAssistant
+                      busy={Boolean(busy)}
+                      brand={form.reportedBrand || ""}
+                      model={form.reportedModel || ""}
+                      onBrandChange={(reportedBrand) =>
+                        onFormChange({ ...form, reportedBrand })
+                      }
+                      onModelChange={(reportedModel) =>
+                        onFormChange({ ...form, reportedModel })
+                      }
+                      onRunTrial={runCharacterProfileTrial}
+                      onValidate={onValidateCharacterProfileTestSet}
+                      onConfirm={confirmCharacterProfile}
+                      onViewDiagnostics={() =>
+                        openDiagnostics({ title: form.nombre, diagnostics })
+                      }
+                      onCopyPrompt={(model) =>
+                        copy(tr("character_profile_ai_prompt", { model }))
+                      }
+                    />
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      title={tr("local_profile_import")}
+                      aria-label={tr("local_profile_import")}
+                      disabled={Boolean(busy)}
+                      onClick={() => setProfileImportOpen(true)}
+                    >
+                      <Upload />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      title={tr("manage_local_profiles")}
+                      aria-label={tr("manage_local_profiles")}
+                      disabled={Boolean(busy)}
+                      onClick={() => setProfileManagerOpen(true)}
+                    >
+                      <Settings2 />
+                    </Button>
+                    {selectedLocalProfile && (
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="outline"
+                        title={tr("local_profile_export")}
+                        aria-label={tr("local_profile_export")}
+                        disabled={Boolean(busy)}
+                        onClick={() => setProfileExportOpen(true)}
+                      >
+                        <Share2 />
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 {profileCatalog.suggestedProfileId &&
                   profileCatalog.suggestedProfileId !==
@@ -569,364 +1083,277 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                     </Button>
                   )}
                 {selectedCatalogProfile && (
-                  <div className="text-sm text-muted-foreground">
-                    <p>
+                  <FormInfoPanel className="p-3">
+                    <p className="text-xs leading-relaxed text-muted-foreground">
                       {selectedCatalogProfile.description?.[language] ||
                         selectedCatalogProfile.description?.en}
                     </p>
-                    <p className="mt-1 font-medium text-foreground">
-                      {tr("profile_coverage")}: {tr("coverage_ascii")}
-                      {selectedCatalogProfile.verifiedCoverage?.includes(
-                        "spanish-latin",
-                      )
-                        ? ` · ${tr(spanishValidated ? "coverage_spanish" : "coverage_spanish_pending")}`
-                        : ` · ${tr("coverage_bitmap")}`}
-                    </p>
-                  </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs font-medium text-foreground">
+                        {tr("profile_coverage")}
+                      </span>
+                      <Badge variant="outline">{tr("coverage_ascii")}</Badge>
+                      <Badge variant="outline">
+                        {tr(
+                          selectedCatalogProfile.verifiedCoverage?.includes(
+                            "spanish-latin",
+                          )
+                            ? "coverage_spanish"
+                            : "coverage_bitmap",
+                        )}
+                      </Badge>
+                    </div>
+                  </FormInfoPanel>
                 )}
               </div>
-              {form.printProfile.language === "es" &&
-                form.printProfile.mode === "auto" &&
-                selectedCatalogProfile?.verifiedCoverage?.includes(
-                  "spanish-latin",
-                ) && (
-                  <div className="text-sm">
-                    <p className="text-muted-foreground">
-                      {tr("spanish_validation_pending")}
-                    </p>
-                    {spanishValidated ? (
-                      <p className="mt-2 font-medium text-emerald-700 dark:text-emerald-400">
-                        {tr("spanish_validation_confirmed")}
-                      </p>
-                    ) : (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => onTest("spanish-validation")}
-                          disabled={busy === "test-draft"}
-                        >
-                          {tr("verify_spanish")}
-                        </Button>
-                        {canConfirmSpanish && (
-                          <Button
-                            type="button"
-                            onClick={() =>
-                              onConfirmSpanish(
-                                Number(selectedCatalogProfile.version),
-                              )
-                            }
-                          >
-                            {tr("spanish_validation_confirm")}
-                          </Button>
+              <details className="rounded-lg border p-4">
+                <summary className="cursor-pointer font-semibold">
+                  {tr("advanced_printing")}
+                </summary>
+                <div className="mt-4 flex flex-col gap-4">
+                  {form.tipo === "bluetooth" && (
+                    <FormField className="md:max-w-xs">
+                      <AdvancedFieldLabel help={tr("baud_rate_help")}>
+                        {tr("baud_rate")}
+                      </AdvancedFieldLabel>
+                      <Input
+                        type="number"
+                        value={String(form.connection.baudRate || 9600)}
+                        aria-invalid={Boolean(error("connection.baudRate"))}
+                        onChange={(event) =>
+                          onConnectionChange(
+                            "baudRate",
+                            Number(event.target.value),
+                          )
+                        }
+                      />
+                      {error("connection.baudRate") && (
+                        <p className="text-xs text-destructive">
+                          {error("connection.baudRate")}
+                        </p>
+                      )}
+                    </FormField>
+                  )}
+                  <p className="text-sm text-muted-foreground">
+                    {form.printProfile.mode === "auto"
+                      ? tr("advanced_profile_notice")
+                      : tr("profile_custom_notice")}
+                  </p>
+                  {!canEditAdvancedProfile ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">{tr("profile_verified")}</Badge>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={createCustomProfile}
+                      >
+                        <Plus data-icon="inline-start" />
+                        {tr("create_custom_profile")}
+                      </Button>
+                    </div>
+                  ) : customProfileNeedsSaving ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">
+                        {tr("profile_changes_pending")}
+                      </Badge>
+                      <Button type="button" onClick={openSaveProfile}>
+                        <Save data-icon="inline-start" />
+                        {tr("save_custom_profile")}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Badge variant="secondary">
+                      {tr("profile_personalized")}
+                    </Badge>
+                  )}
+                  <FieldGroup className="grid gap-4 md:grid-cols-3">
+                    <FormField>
+                      <AdvancedFieldLabel help={tr("encoding_help")}>
+                        {tr("encoding")}
+                      </AdvancedFieldLabel>
+                      <Select
+                        value={advancedProfileValues.encoding}
+                        disabled={!canEditAdvancedProfile}
+                        onValueChange={(encoding) => {
+                          const preset = encodingPresets.find(
+                            (item) => item.encoding === encoding,
+                          );
+                          if (preset)
+                            updateAdvancedProfile(
+                              {
+                                encoding: preset.encoding,
+                                codeTable: preset.codeTable,
+                              },
+                              false,
+                            );
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {encodingPresets.map((preset) => (
+                              <SelectItem
+                                key={preset.encoding}
+                                value={preset.encoding}
+                              >
+                                {preset.encoding}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      {error("printProfile.custom.encoding") && (
+                        <p className="text-xs text-destructive">
+                          {error("printProfile.custom.encoding")}
+                        </p>
+                      )}
+                    </FormField>
+                    <FormField>
+                      <AdvancedFieldLabel help={tr("character_table_help")}>
+                        {tr("character_table")}
+                      </AdvancedFieldLabel>
+                      <Select
+                        value={selectedCharacterTable(
+                          advancedProfileValues.codeTable,
+                          form.customCharacterTable,
                         )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              {(form.printProfile.profileId === "unlisted-safe" ||
-                form.printProfile.mode === "custom") && (
-                <div className="grid gap-3 border-t pt-4">
-                  <label className="grid gap-1 text-sm font-medium">
-                    {tr("reported_model")}
-                    <Input
-                      value={form.reportedModel || ""}
-                      aria-invalid={Boolean(error("reportedModel"))}
-                      onChange={(event) =>
-                        onFormChange({
-                          ...form,
-                          reportedModel: event.target.value,
-                        })
-                      }
-                    />
-                    {error("reportedModel") && (
-                      <p className="text-xs text-destructive">
-                        {error("reportedModel")}
-                      </p>
-                    )}
-                  </label>
-                  <div>
-                    <p className="font-medium">{tr("compatibility_report")}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {tr("compatibility_report_description")}
-                    </p>
-                    <Button
-                      className="mt-3"
-                      type="button"
-                      variant="outline"
-                      disabled={busy === "export-report"}
-                      onClick={onExportReport}
-                    >
-                      <Clipboard data-icon="inline-start" />
-                      {tr("export_report")}
-                    </Button>
-                  </div>
+                        disabled={!canEditAdvancedProfile}
+                        onValueChange={(value) =>
+                          value === "custom"
+                            ? updateAdvancedProfile({}, true)
+                            : updateAdvancedProfile(
+                                { codeTable: Number(value) },
+                                false,
+                              )
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {characterTablePresets.map((preset) => (
+                              <SelectItem
+                                key={preset.value}
+                                value={String(preset.value)}
+                              >
+                                {preset.label}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="custom">
+                              {tr("custom_character_table")}
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      {selectedCharacterTable(
+                        advancedProfileValues.codeTable,
+                        form.customCharacterTable,
+                      ) === "custom" && (
+                        <Input
+                          type="number"
+                          min="0"
+                          max="255"
+                          aria-label={tr("custom_character_table_number")}
+                          placeholder={tr("custom_character_table_number")}
+                          value={String(advancedProfileValues.codeTable)}
+                          disabled={!canEditAdvancedProfile}
+                          onChange={(event) =>
+                            updateAdvancedProfile(
+                              { codeTable: Number(event.target.value) },
+                              true,
+                            )
+                          }
+                        />
+                      )}
+                      {error("printProfile.custom.codeTable") && (
+                        <p className="text-xs text-destructive">
+                          {error("printProfile.custom.codeTable")}
+                        </p>
+                      )}
+                    </FormField>
+                    <FormField>
+                      <AdvancedFieldLabel help={tr("unicode_strategy_help")}>
+                        {tr("unicode_strategy")}
+                      </AdvancedFieldLabel>
+                      <Select
+                        value={advancedProfileValues.unicodeFallback}
+                        disabled={!canEditAdvancedProfile}
+                        onValueChange={(unicodeFallback) =>
+                          updateAdvancedProfile({
+                            unicodeFallback:
+                              unicodeFallback as ProfileValues["unicodeFallback"],
+                          })
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="auto">
+                              {tr("unicode_auto")}
+                            </SelectItem>
+                            <SelectItem value="raster">
+                              {tr("unicode_raster")}
+                            </SelectItem>
+                            <SelectItem value="native">
+                              {tr("unicode_native")}
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </FormField>
+                  </FieldGroup>
                 </div>
-              )}
-            </section>
-            <div className="border-t" />
-            <section className="space-y-3">
-              <h3 className="font-semibold">{tr("operation_section")}</h3>
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="flex items-center justify-between text-sm font-medium">
-                  {tr("open_drawer_setting")}
+              </details>
+            </FormSection>
+            <Separator />
+            <FormSection title={tr("operation_section")}>
+              <FieldGroup className="grid gap-4 md:grid-cols-2">
+                <Field orientation="horizontal">
+                  <FieldLabel htmlFor="open-drawer-setting">
+                    {tr("open_drawer_setting")}
+                  </FieldLabel>
                   <Switch
+                    id="open-drawer-setting"
                     checked={form.abreCajon}
                     onCheckedChange={(abreCajon) =>
                       onFormChange({ ...form, abreCajon })
                     }
                   />
-                </label>
-                <label className="flex items-center justify-between text-sm font-medium">
-                  {tr("printer_enabled")}
+                </Field>
+                <Field orientation="horizontal">
+                  <FieldLabel htmlFor="printer-enabled-setting">
+                    {tr("printer_enabled")}
+                  </FieldLabel>
                   <Switch
+                    id="printer-enabled-setting"
                     checked={form.enabled}
                     onCheckedChange={(enabled) =>
                       onFormChange({ ...form, enabled })
                     }
                   />
-                </label>
-              </div>
-            </section>
-            <div className="border-t" />
-            <details className="rounded-lg border p-4">
-              <summary className="cursor-pointer font-semibold">
-                {tr("advanced_printing")}
-              </summary>
-              <div className="mt-4 space-y-4">
-                {form.tipo === "bluetooth" && (
-                  <label className="grid gap-1 text-sm font-medium md:max-w-xs">
-                    Baud rate
-                    <Input
-                      type="number"
-                      value={String(form.connection.baudRate || 9600)}
-                      aria-invalid={Boolean(error("connection.baudRate"))}
-                      onChange={(event) =>
-                        onConnectionChange(
-                          "baudRate",
-                          Number(event.target.value),
-                        )
-                      }
-                    />
-                    {error("connection.baudRate") && (
-                      <p className="text-xs text-destructive">
-                        {error("connection.baudRate")}
-                      </p>
-                    )}
-                  </label>
-                )}
-                <p className="text-sm text-muted-foreground">
-                  {form.printProfile.mode === "auto"
-                    ? tr("advanced_profile_notice")
-                    : tr("profile_custom_notice")}
-                </p>
-                <div className="grid gap-4 md:grid-cols-3">
-                  <label className="grid gap-1 text-sm font-medium">
-                    {tr("encoding")}
-                    <Select
-                      value={advancedProfileValues.encoding}
-                      onValueChange={(encoding) => {
-                        const preset = encodingPresets.find(
-                          (item) => item.encoding === encoding,
-                        );
-                        if (preset)
-                          updateAdvancedProfile(
-                            {
-                              encoding: preset.encoding,
-                              codeTable: preset.codeTable,
-                            },
-                            false,
-                          );
-                      }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {encodingPresets.map((preset) => (
-                          <SelectItem
-                            key={preset.encoding}
-                            value={preset.encoding}
-                          >
-                            {preset.encoding}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {error("printProfile.custom.encoding") && (
-                      <p className="text-xs text-destructive">
-                        {error("printProfile.custom.encoding")}
-                      </p>
-                    )}
-                  </label>
-                  <label className="grid gap-1 text-sm font-medium">
-                    {tr("character_table")}
-                    <Select
-                      value={selectedCharacterTable(
-                        advancedProfileValues.codeTable,
-                        form.customCharacterTable,
-                      )}
-                      onValueChange={(value) =>
-                        value === "custom"
-                          ? updateAdvancedProfile({}, true)
-                          : updateAdvancedProfile(
-                              { codeTable: Number(value) },
-                              false,
-                            )
-                      }
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {characterTablePresets.map((preset) => (
-                          <SelectItem
-                            key={preset.value}
-                            value={String(preset.value)}
-                          >
-                            {preset.label}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="custom">
-                          {tr("custom_character_table")}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {selectedCharacterTable(
-                      advancedProfileValues.codeTable,
-                      form.customCharacterTable,
-                    ) === "custom" && (
-                      <Input
-                        type="number"
-                        min="0"
-                        max="255"
-                        aria-label={tr("custom_character_table_number")}
-                        placeholder={tr("custom_character_table_number")}
-                        value={String(advancedProfileValues.codeTable)}
-                        onChange={(event) =>
-                          updateAdvancedProfile(
-                            { codeTable: Number(event.target.value) },
-                            true,
-                          )
-                        }
-                      />
-                    )}
-                    {error("printProfile.custom.codeTable") && (
-                      <p className="text-xs text-destructive">
-                        {error("printProfile.custom.codeTable")}
-                      </p>
-                    )}
-                  </label>
-                  <label className="grid gap-1 text-sm font-medium">
-                    {tr("unicode_strategy")}
-                    <Select
-                      value={advancedProfileValues.unicodeFallback}
-                      onValueChange={(unicodeFallback) =>
-                        updateAdvancedProfile({
-                          unicodeFallback:
-                            unicodeFallback as ProfileValues["unicodeFallback"],
-                        })
-                      }
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="auto">
-                          {tr("unicode_auto")}
-                        </SelectItem>
-                        <SelectItem value="raster">
-                          {tr("unicode_raster")}
-                        </SelectItem>
-                        <SelectItem value="native">
-                          {tr("unicode_native")}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </label>
-                </div>
-              </div>
-            </details>
-            <details className="rounded-lg border p-4">
-              <summary className="cursor-pointer font-semibold">
-                {tr("print_diagnostics")}
-              </summary>
-              <div className="mt-3 space-y-3 text-sm">
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={!diagnostics.length}
-                    onClick={() => copy(JSON.stringify(diagnostics, null, 2))}
-                  >
-                    <Clipboard data-icon="inline-start" />
-                    {tr("copy")}
-                  </Button>
-                </div>
-                {diagnostics.length ? (
-                  diagnostics.map((entry: any, index: number) => (
-                    <article
-                      key={`${entry.startedAt}-${index}`}
-                      className="border-t pt-3 first:border-t-0 first:pt-0"
-                    >
-                      <p className="font-medium">
-                        {entry.ok
-                          ? tr("operation_completed")
-                          : translateMessage(language, entry.message)}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {entry.operation} ·{" "}
-                        {new Date(entry.startedAt).toLocaleString()} ·{" "}
-                        {entry.durationMs || 0} ms
-                      </p>
-                      {entry.cause && (
-                        <div className="mt-3">
-                          <p className="text-xs font-medium">
-                            {tr("diagnostic_cause")}
-                          </p>
-                          <code className="mt-1 block break-words bg-muted p-2 text-xs">
-                            {entry.cause}
-                          </code>
-                        </div>
-                      )}
-                      {entry.steps?.length > 0 && (
-                        <div className="mt-3">
-                          <p className="text-xs font-medium">
-                            {tr("diagnostic_steps")}
-                          </p>
-                          <ol className="mt-1 space-y-1 text-xs text-muted-foreground">
-                            {entry.steps.map(
-                              (
-                                step: Record<string, unknown>,
-                                stepIndex: number,
-                              ) => (
-                                <li
-                                  key={`${String(step.at)}-${stepIndex}`}
-                                  className="break-words"
-                                >
-                                  <code>{String(step.stage)}</code>
-                                  {diagnosticDetails(step) &&
-                                    ` · ${diagnosticDetails(step)}`}
-                                </li>
-                              ),
-                            )}
-                          </ol>
-                        </div>
-                      )}
-                    </article>
-                  ))
-                ) : (
-                  <p className="text-muted-foreground">
-                    {tr("no_print_diagnostics")}
-                  </p>
-                )}
-              </div>
-            </details>
+                </Field>
+              </FieldGroup>
+            </FormSection>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                openDiagnostics({ title: form.nombre, diagnostics })
+              }
+            >
+              <ScrollText data-icon="inline-start" />
+              {tr("print_diagnostics")}
+            </Button>
           </div>
         </div>
       )}
-      <div className="shrink-0 border-t bg-muted/50 p-4">
+      <div className="shrink-0 bg-muted/50 p-4">
+        <Separator className="-mx-4 -mt-4 mb-4 w-[calc(100%+2rem)]" />
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button variant="outline" onClick={requestClose}>
             {tr("cancel")}
@@ -947,7 +1374,11 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                 hasAttemptedValidation.current = true;
               })()
             }
-            disabled={busy === "save" || Boolean(form?.id && !isDirty)}
+            disabled={
+              busy === "save" ||
+              customProfileNeedsSaving ||
+              Boolean(form?.id && !isDirty)
+            }
           >
             {tr("save_printer")}
           </Button>
@@ -979,6 +1410,292 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
               }}
             >
               {tr("discard_changes")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(pendingProfileLanguage)}
+        onOpenChange={(open) => {
+          if (!open) setPendingProfileLanguage(undefined);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {tr("discard_profile_for_language_title")}
+            </DialogTitle>
+            <DialogDescription>
+              {tr("discard_profile_for_language_description")}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPendingProfileLanguage(undefined)}
+            >
+              {tr("keep_profile_settings")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (pendingProfileLanguage)
+                  applyAutomaticProfileForLanguage(pendingProfileLanguage);
+                setPendingProfileLanguage(undefined);
+              }}
+            >
+              {tr("discard_profile_and_change_language")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={saveProfileOpen} onOpenChange={setSaveProfileOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tr("save_custom_profile")}</DialogTitle>
+            <DialogDescription>
+              {tr("save_custom_profile_description", {
+                width: form.anchoMm,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field data-invalid={profileIdentityError || undefined}>
+              <FieldLabel htmlFor="local-profile-brand">
+                {tr("reported_brand")}
+              </FieldLabel>
+              <Input
+                id="local-profile-brand"
+                value={profileBrand}
+                aria-invalid={profileIdentityError}
+                onChange={(event) => {
+                  setProfileBrand(event.target.value);
+                  setProfileIdentityError(false);
+                }}
+              />
+            </Field>
+            <Field data-invalid={profileIdentityError || undefined}>
+              <FieldLabel htmlFor="local-profile-model">
+                {tr("reported_model")}
+              </FieldLabel>
+              <Input
+                id="local-profile-model"
+                value={profileModel}
+                aria-invalid={profileIdentityError}
+                onChange={(event) => {
+                  setProfileModel(event.target.value);
+                  setProfileIdentityError(false);
+                }}
+              />
+              {profileIdentityError && (
+                <FieldError>{tr("validation_required")}</FieldError>
+              )}
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveProfileOpen(false)}>
+              {tr("cancel")}
+            </Button>
+            <Button onClick={() => void saveCustomProfile()}>
+              <Save data-icon="inline-start" />
+              {tr("save_custom_profile")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={profileImportOpen} onOpenChange={setProfileImportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tr("local_profile_import")}</DialogTitle>
+            <DialogDescription>
+              {tr("local_profile_import_description")}
+            </DialogDescription>
+          </DialogHeader>
+          <input
+            ref={profileImportInputRef}
+            className="sr-only"
+            type="file"
+            accept="application/json"
+            aria-label={tr("local_profile_select_file")}
+            onChange={importLocalProfile}
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto min-h-28 flex-col gap-2 py-5"
+              disabled={Boolean(busy)}
+              onClick={() => void pasteLocalProfile()}
+            >
+              <ClipboardPaste className="size-5" />
+              {tr("local_profile_paste")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={Boolean(busy)}
+              className={`flex min-h-28 flex-col items-center justify-center gap-2 rounded-md border border-dashed p-3 text-center transition-colors ${
+                profileFileDragging ? "border-primary bg-primary/5" : ""
+              }`}
+              onClick={() => profileImportInputRef.current?.click()}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setProfileFileDragging(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setProfileFileDragging(false)}
+              onDrop={(event) => void importDroppedLocalProfile(event)}
+            >
+              <Upload className="size-5 text-muted-foreground" />
+              <span className="max-w-full whitespace-normal break-words text-sm leading-snug text-muted-foreground">
+                {tr("local_profile_drop_file")}
+              </span>
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setProfileImportOpen(false)}
+            >
+              {tr("cancel")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={profileExportOpen} onOpenChange={setProfileExportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tr("local_profile_export")}</DialogTitle>
+            <DialogDescription>
+              {tr("local_profile_export_description")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto min-h-28 flex-col gap-2 py-5"
+              disabled={Boolean(busy)}
+              onClick={() =>
+                void onExportLocalProfile("clipboard").then((exported) => {
+                  if (exported) setProfileExportOpen(false);
+                })
+              }
+            >
+              <Clipboard className="size-5" />
+              {tr("local_profile_copy")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-auto min-h-28 flex-col gap-2 py-5"
+              disabled={Boolean(busy)}
+              onClick={() =>
+                void onExportLocalProfile("file").then((exported) => {
+                  if (exported) setProfileExportOpen(false);
+                })
+              }
+            >
+              <Download className="size-5" />
+              {tr("local_profile_download")}
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setProfileExportOpen(false)}
+            >
+              {tr("cancel")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={profileManagerOpen} onOpenChange={setProfileManagerOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tr("manage_local_profiles")}</DialogTitle>
+            <DialogDescription>
+              {tr("manage_local_profiles_description")}
+            </DialogDescription>
+          </DialogHeader>
+          {localProfiles.length ? (
+            <div className="flex max-h-80 flex-col gap-2 overflow-y-auto">
+              {localProfiles.map((profile: any) => (
+                <article
+                  key={profile.id}
+                  className="flex items-center gap-3 rounded-md border p-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {displayProfileName(profile)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {tr("local_profile_usage", {
+                        count: Number(profile.usageCount) || 0,
+                      })}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="destructive"
+                    aria-label={tr("delete_local_profile")}
+                    title={tr("delete_local_profile")}
+                    disabled={Boolean(busy)}
+                    onClick={() => setProfileDeletionTarget(profile)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {tr("no_local_profiles")}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setProfileManagerOpen(false)}
+            >
+              {tr("close")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(profileDeletionTarget)}
+        onOpenChange={(open) => {
+          if (!open) setProfileDeletionTarget(undefined);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tr("delete_local_profile_title")}</DialogTitle>
+            <DialogDescription>
+              {tr("delete_local_profile_description", {
+                profile: profileDeletionTarget
+                  ? displayProfileName(profileDeletionTarget)
+                  : "",
+                count: Number(profileDeletionTarget?.usageCount) || 0,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setProfileDeletionTarget(undefined)}
+            >
+              {tr("cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={Boolean(busy)}
+              onClick={() => void deleteManagedProfile()}
+            >
+              <Trash2 data-icon="inline-start" />
+              {tr("delete_local_profile")}
             </Button>
           </DialogFooter>
         </DialogContent>

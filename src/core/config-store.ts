@@ -11,7 +11,12 @@ import {
   isSupportedEncoding,
 } from "./printer-profiles";
 import { getCatalogProfile } from "./printer-profile-catalog";
-import type { BridgeConfig, Printer, PrintProfile } from "./types";
+import type {
+  BridgeConfig,
+  LocalPrintProfile,
+  Printer,
+  PrintProfile,
+} from "./types";
 
 const customPrintProfileSchema = z
   .object({
@@ -19,6 +24,14 @@ const customPrintProfileSchema = z
     codeTable: z.number().int().min(0).max(255),
     unicodeFallback: z.enum(["auto", "raster", "native"]),
     automaticUnicodePolicy: z.enum(["encoding", "ascii"]).optional(),
+    confirmation: z
+      .object({
+        confirmedAt: z.string().datetime(),
+        testSetName: z.string().min(1).max(120),
+        candidateId: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 const profileValidationSchema = z
@@ -49,6 +62,10 @@ const printProfileSchema = z.discriminatedUnion("mode", [
       language: z.enum(["es", "en"]),
       mode: z.literal("custom"),
       custom: customPrintProfileSchema,
+      localProfileId: z
+        .string()
+        .regex(/^[A-Za-z0-9._-]{1,96}$/)
+        .optional(),
     })
     .strict(),
 ]);
@@ -77,6 +94,7 @@ const printerFields = {
   id: z.string().min(1),
   nombre: z.string().min(1),
   anchoMm: z.union([z.literal(58), z.literal(80)]),
+  reportedBrand: z.string().max(160).optional(),
   reportedModel: z.string().max(160).optional(),
   printProfile: printProfileSchema,
   abreCajon: z.boolean(),
@@ -105,6 +123,17 @@ const printerSchema = z.discriminatedUnion("tipo", [
     })
     .strict(),
 ]);
+const localPrintProfileSchema = z
+  .object({
+    id: z.string().regex(/^[A-Za-z0-9._-]{1,96}$/),
+    name: z.string().min(1).max(160),
+    brand: z.string().min(1).max(160),
+    model: z.string().min(1).max(160),
+    language: z.enum(["es", "en"]),
+    widthMm: z.union([z.literal(58), z.literal(80)]),
+    values: customPrintProfileSchema,
+  })
+  .strict();
 const persistedConfigSchema = z
   .object({
     version: z.literal(1),
@@ -113,6 +142,7 @@ const persistedConfigSchema = z
     allowedOrigins: z.array(z.string()),
     language: z.enum(["system", "es", "en"]),
     printers: z.array(z.unknown()),
+    localProfiles: z.array(z.unknown()).optional(),
   })
   .strict();
 const configSchema = z
@@ -123,6 +153,7 @@ const configSchema = z
     allowedOrigins: z.array(z.string()),
     language: z.enum(["system", "es", "en"]),
     printers: z.array(printerSchema),
+    localProfiles: z.array(localPrintProfileSchema),
   })
   .strict();
 export const token = () => crypto.randomBytes(24).toString("hex");
@@ -135,6 +166,65 @@ export const slug = (value: string) =>
     .replace(/[\s_-]+/g, "-")
     .replace(/^-+|-+$/g, "") ||
   `printer-${crypto.randomBytes(3).toString("hex")}`;
+const localProfileIdentity = (
+  brand: string,
+  model: string,
+  widthMm: number,
+  language: LocalPrintProfile["language"],
+) =>
+  `${brand.trim().toLocaleLowerCase()}::${model.trim().toLocaleLowerCase()}::${widthMm}::${language}`;
+const localProfileId = (
+  brand: string,
+  model: string,
+  widthMm: number,
+  language: LocalPrintProfile["language"],
+) => `local-${slug(`${brand}-${model}-${widthMm}mm`).slice(0, 87)}-${language}`;
+const localProfileFromPrinter = (
+  printer: Printer,
+  id = localProfileId(
+    String(printer.reportedBrand || ""),
+    String(printer.reportedModel || ""),
+    printer.anchoMm,
+    printer.printProfile.language,
+  ),
+): LocalPrintProfile | undefined => {
+  const custom =
+    printer.printProfile.mode === "custom"
+      ? printer.printProfile.custom
+      : undefined;
+  const brand = String(printer.reportedBrand || "").trim();
+  const model = String(printer.reportedModel || "").trim();
+  if (!brand || !model || !custom) return undefined;
+  return {
+    id,
+    name: `${brand} ${model}`,
+    brand,
+    model,
+    language: printer.printProfile.language,
+    widthMm: printer.anchoMm,
+    values: { ...custom },
+  };
+};
+const importedLocalProfileSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    kind: z.literal("pos-ticket-bridge-local-profile"),
+    brand: z.string().trim().min(1).max(160),
+    model: z.string().trim().min(1).max(160),
+    widthMm: z.union([z.literal(58), z.literal(80)]),
+    encoding: z.string().trim().min(1).max(64),
+    codeTable: z.number().int().min(0).max(255),
+    unicodeFallback: z.enum(["auto", "raster", "native"]),
+    confirmedAt: z.string().datetime().optional(),
+    testSet: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        candidateId: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 export const suggestedHosts = (port: number) =>
   [
     ...new Set(
@@ -155,6 +245,7 @@ export const defaultConfig = (): BridgeConfig => ({
   allowedOrigins: [],
   language: "system",
   printers: [],
+  localProfiles: [],
 });
 
 export class ConfigStore {
@@ -176,12 +267,56 @@ export class ConfigStore {
         const result = printerSchema.safeParse(printer);
         return result.success ? [result.data] : [];
       });
+      const localProfiles = (persisted.localProfiles || []).flatMap(
+        (profile) => {
+          const result = localPrintProfileSchema.safeParse(profile);
+          return result.success ? [result.data] : [];
+        },
+      );
+      const migratedPrinters = printers.map((printer) => {
+        const localProfile = localProfileFromPrinter(printer);
+        if (!localProfile) return printer;
+        const profile =
+          localProfiles.find(
+            (item) =>
+              localProfileIdentity(
+                item.brand,
+                item.model,
+                item.widthMm,
+                item.language,
+              ) ===
+              localProfileIdentity(
+                localProfile.brand,
+                localProfile.model,
+                localProfile.widthMm,
+                localProfile.language,
+              ),
+          ) || localProfile;
+        if (!localProfiles.some((item) => item.id === profile.id))
+          localProfiles.push(profile);
+        return {
+          ...printer,
+          printProfile: {
+            ...printer.printProfile,
+            localProfileId: profile.id,
+          },
+        };
+      });
+      const synchronizedPrinters = migratedPrinters.map((printer) =>
+        this.applyLocalProfile(printer, localProfiles),
+      );
       const next = configSchema.parse({
         ...persisted,
-        printers,
+        printers: synchronizedPrinters,
+        localProfiles,
       }) as BridgeConfig;
 
-      if (printers.length !== persisted.printers.length) this.write(next);
+      if (
+        printers.length !== persisted.printers.length ||
+        !persisted.localProfiles ||
+        JSON.stringify(synchronizedPrinters) !== JSON.stringify(printers)
+      )
+        this.write(next);
       return next;
     } catch {
       const next = defaultConfig();
@@ -229,26 +364,42 @@ export class ConfigStore {
       language: input.language || this.config.language,
     });
   }
+  private uniqueLocalProfileId(base: string) {
+    let next = base;
+    let n = 2;
+    while (this.config.localProfiles.some((profile) => profile.id === next))
+      next = `${base}-${n++}`;
+    return next;
+  }
+  private applyLocalProfile(
+    printer: Printer,
+    profiles = this.config.localProfiles,
+  ): Printer {
+    if (printer.printProfile.mode !== "custom") return printer;
+    const profile = profiles.find(
+      (item) => item.id === printer.printProfile.localProfileId,
+    );
+    if (!profile) return printer;
+    return {
+      ...printer,
+      anchoMm: profile.widthMm,
+      reportedBrand: profile.brand,
+      reportedModel: profile.model,
+      printProfile: {
+        language: profile.language,
+        mode: "custom",
+        custom: { ...profile.values },
+        localProfileId: profile.id,
+      },
+    };
+  }
   private normalized(input: Partial<Printer>, current?: Printer): Printer {
     const requestedProfile = input.printProfile;
     const currentProfile = current?.printProfile;
-    const languageChanged =
-      Boolean(requestedProfile?.language) &&
-      requestedProfile?.language !== currentProfile?.language;
-    const profileChanged =
-      requestedProfile?.profileId !== undefined &&
-      requestedProfile.profileId !== currentProfile?.profileId;
-    const preservedValidation =
+    const legacyValidation =
       requestedProfile?.validation === undefined
         ? currentProfile?.validation
         : requestedProfile.validation;
-    const validation = profileChanged
-      ? undefined
-      : languageChanged
-        ? preservedValidation?.ascii
-          ? { ascii: preservedValidation.ascii }
-          : undefined
-        : preservedValidation;
     const merged = {
       ...current,
       ...input,
@@ -267,7 +418,7 @@ export class ConfigStore {
                   currentProfile?.profileId ||
                   defaultAutomaticProfileId(),
               ).id,
-        validation,
+        validation: legacyValidation,
         custom:
           requestedProfile?.custom === undefined
             ? currentProfile?.custom
@@ -307,10 +458,11 @@ export class ConfigStore {
               vendorId: String(merged.connection.vendorId || "").trim(),
               productId: String(merged.connection.productId || "").trim(),
             };
-    return {
+    return this.applyLocalProfile({
       ...merged,
       id: slug(merged.id || merged.nombre || "printer"),
       nombre: String(merged.nombre || "").trim(),
+      reportedBrand: String(merged.reportedBrand || "").trim() || undefined,
       reportedModel: String(merged.reportedModel || "").trim() || undefined,
       anchoMm: Number(merged.anchoMm) === 58 ? 58 : 80,
       printProfile: {
@@ -319,7 +471,9 @@ export class ConfigStore {
         ...(mode === "auto" && selectedProfile.profileId
           ? { profileId: selectedProfile.profileId }
           : {}),
-        ...(mode === "auto" && validation ? { validation } : {}),
+        ...(mode === "auto" && legacyValidation
+          ? { validation: legacyValidation }
+          : {}),
         ...(mode === "custom"
           ? {
               custom: {
@@ -327,14 +481,18 @@ export class ConfigStore {
                 codeTable: Number(custom.codeTable),
                 unicodeFallback: custom.unicodeFallback,
                 automaticUnicodePolicy: custom.automaticUnicodePolicy,
+                confirmation: custom.confirmation,
               },
+              ...(selectedProfile.localProfileId
+                ? { localProfileId: selectedProfile.localProfileId }
+                : {}),
             }
           : {}),
       },
       abreCajon: Boolean(merged.abreCajon),
       enabled: merged.enabled !== false,
       connection,
-    };
+    });
   }
   private unique(id: string, skip?: string) {
     let next = id;
@@ -344,13 +502,13 @@ export class ConfigStore {
     return next;
   }
   create(input: Partial<Printer>) {
-    const printer = this.normalized(input);
-    printer.id = this.unique(printer.id);
+    const normalized = this.normalized(input);
+    normalized.id = this.unique(normalized.id);
     return this.save({
       ...this.config,
       printers: [
         ...this.config.printers,
-        printerSchema.parse(printer) as Printer,
+        printerSchema.parse(normalized) as Printer,
       ],
     });
   }
@@ -358,10 +516,10 @@ export class ConfigStore {
     const index = this.config.printers.findIndex((p) => p.id === id);
     if (index < 0)
       throw new BridgeError("printer_not_found", { printerId: id });
-    const printer = this.normalized(input, this.config.printers[index]);
-    printer.id = this.unique(printer.id, id);
+    const normalized = this.normalized(input, this.config.printers[index]);
+    normalized.id = this.unique(normalized.id, id);
     const printers = [...this.config.printers];
-    printers[index] = printerSchema.parse(printer) as Printer;
+    printers[index] = printerSchema.parse(normalized) as Printer;
     return this.save({ ...this.config, printers });
   }
   remove(id: string) {
@@ -386,5 +544,131 @@ export class ConfigStore {
     const printer = this.config.printers.find((p) => p.id === id);
     if (!printer) throw new BridgeError("printer_not_found", { printerId: id });
     return structuredClone(printer);
+  }
+  importLocalProfile(input: unknown) {
+    const parsed = importedLocalProfileSchema.safeParse(input);
+    if (!parsed.success || !isSupportedEncoding(parsed.data.encoding))
+      throw new BridgeError("invalid_request");
+    const value = parsed.data;
+    const existing = this.config.localProfiles.find(
+      (profile) =>
+        localProfileIdentity(
+          profile.brand,
+          profile.model,
+          profile.widthMm,
+          profile.language,
+        ) ===
+        localProfileIdentity(value.brand, value.model, value.widthMm, "es"),
+    );
+    const id =
+      existing?.id ||
+      this.uniqueLocalProfileId(
+        localProfileId(value.brand, value.model, value.widthMm, "es"),
+      );
+    const profile: LocalPrintProfile = {
+      id,
+      name: `${value.brand} ${value.model}`,
+      brand: value.brand,
+      model: value.model,
+      language: "es",
+      widthMm: value.widthMm,
+      values: {
+        encoding: value.encoding.toUpperCase(),
+        codeTable: value.codeTable,
+        unicodeFallback: value.unicodeFallback,
+        automaticUnicodePolicy: "encoding",
+        ...(value.confirmedAt && value.testSet
+          ? {
+              confirmation: {
+                confirmedAt: value.confirmedAt,
+                testSetName: value.testSet.name,
+                candidateId: value.testSet.candidateId,
+              },
+            }
+          : {}),
+      },
+    };
+    const localProfiles = [
+      ...this.config.localProfiles.filter((item) => item.id !== id),
+      profile,
+    ];
+    this.save({
+      ...this.config,
+      localProfiles,
+      printers: this.config.printers.map((printer) =>
+        this.applyLocalProfile(printer, localProfiles),
+      ),
+    });
+    return profile;
+  }
+
+  saveLocalProfile(input: unknown) {
+    const parsed = localPrintProfileSchema
+      .omit({ id: true, name: true })
+      .safeParse(input);
+    if (!parsed.success || !isSupportedEncoding(parsed.data.values.encoding))
+      throw new BridgeError("invalid_request");
+    const value = parsed.data;
+    const existing = this.config.localProfiles.find(
+      (profile) =>
+        localProfileIdentity(
+          profile.brand,
+          profile.model,
+          profile.widthMm,
+          profile.language,
+        ) ===
+        localProfileIdentity(
+          value.brand,
+          value.model,
+          value.widthMm,
+          value.language,
+        ),
+    );
+    const id =
+      existing?.id ||
+      this.uniqueLocalProfileId(
+        localProfileId(value.brand, value.model, value.widthMm, value.language),
+      );
+    const profile: LocalPrintProfile = {
+      id,
+      name: `${value.brand} ${value.model}`,
+      ...value,
+      values: {
+        ...value.values,
+        encoding: value.values.encoding.toUpperCase(),
+      },
+    };
+    const localProfiles = [
+      ...this.config.localProfiles.filter((item) => item.id !== id),
+      profile,
+    ];
+    this.save({
+      ...this.config,
+      localProfiles,
+      printers: this.config.printers.map((printer) =>
+        this.applyLocalProfile(printer, localProfiles),
+      ),
+    });
+    return profile;
+  }
+
+  deleteLocalProfile(id: string) {
+    const localProfiles = this.config.localProfiles.filter(
+      (profile) => profile.id !== id,
+    );
+    const detachedPrinterIds: string[] = [];
+    const printers = this.config.printers.map((printer) => {
+      if (
+        printer.printProfile.mode !== "custom" ||
+        printer.printProfile.localProfileId !== id
+      )
+        return printer;
+      detachedPrinterIds.push(printer.id);
+      const printProfile = { ...printer.printProfile };
+      delete printProfile.localProfileId;
+      return { ...printer, printProfile };
+    });
+    this.save({ ...this.config, localProfiles, printers });
+    return { id, detachedPrinterIds };
   }
 }

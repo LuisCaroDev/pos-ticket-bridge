@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { z } from "zod";
 import {
   errorPayload,
+  characterProfileTrialTexts,
   message,
   resolveLanguage,
   testPrintTexts,
@@ -15,9 +16,22 @@ import {
   discoverNetwork,
   discoverUsb,
 } from "./discovery";
-import { publicPrintProfile, resolvePrintProfile } from "./printer-profiles";
+import {
+  isSupportedEncoding,
+  publicPrintProfile,
+  resolvePrintProfile,
+} from "./printer-profiles";
 import { PROFILE_CATALOG_VERSION } from "./printer-profile-catalog";
-import { openDrawer, printJob, testPrint } from "./printer";
+import {
+  characterProfileTrialPrint,
+  openDrawer,
+  printJob,
+  testPrint,
+} from "./printer";
+import {
+  validateCharacterProfileCandidate,
+  validateCharacterProfileTestSet,
+} from "./character-profile-tests";
 import type { Diagnostic, Printer } from "./types";
 
 const printSchema = z.object({
@@ -134,7 +148,6 @@ export function createBridgeServer(
     input: Printer,
     options: {
       draftSessionId?: string;
-      operation?: "test-draft" | "spanish-validation";
     } = {},
   ) => {
     const printer: Printer = {
@@ -144,7 +157,7 @@ export function createBridgeServer(
     try {
       const diagnostic = await operation(
         printer,
-        options.operation || "test-draft",
+        "test-draft",
         (hooks) =>
           testPrint(
             printer,
@@ -165,6 +178,57 @@ export function createBridgeServer(
       };
     }
   };
+  const runCharacterProfileTrial = async (
+    input: Printer,
+    candidateInput: unknown,
+    draftSessionId?: string,
+  ) => {
+    const printer: Printer = {
+      ...input,
+      id: input.id || `draft:${draftSessionId || "printer"}`,
+    };
+    try {
+      const diagnostic = await operation(
+        printer,
+        "character-profile-trial",
+        (hooks) => {
+          const candidate = validateCharacterProfileCandidate(
+            candidateInput,
+            isSupportedEncoding,
+          );
+          const trialPrinter: Printer = {
+            ...printer,
+            printProfile: {
+              language: "es",
+              mode: "custom",
+              custom: {
+                encoding: candidate.encoding,
+                codeTable: candidate.codeTable,
+                // A bitmap would hide the very character-table fault being tested.
+                unicodeFallback: "native",
+              },
+            },
+          };
+          hooks.onEvent("character_profile_candidate", candidate);
+          return characterProfileTrialPrint(
+            trialPrinter,
+            characterProfileTrialTexts(getActiveLanguage(), candidate),
+            hooks,
+          );
+        },
+        draftSessionId,
+      );
+      return { ok: true, diagnostic };
+    } catch (error) {
+      return {
+        ok: false,
+        error: errorPayload(error),
+        diagnostic: (error as Error & { diagnostic?: Diagnostic }).diagnostic,
+      };
+    }
+  };
+  const validateCharacterProfileTestSetInput = (input: unknown) =>
+    validateCharacterProfileTestSet(input, isSupportedEncoding);
   const discardDraftDiagnostics = (draftSessionId: string) => {
     for (let index = diagnostics.length - 1; index >= 0; index -= 1)
       if (diagnostics[index].draftSessionId === draftSessionId)
@@ -328,6 +392,8 @@ export function createBridgeServer(
     store,
     status,
     testPrinter,
+    runCharacterProfileTrial,
+    validateCharacterProfileTestSet: validateCharacterProfileTestSetInput,
     discardDraftDiagnostics,
     promoteDraftDiagnostics,
     start: async () => app.listen({ port: store.get().port, host: "0.0.0.0" }),

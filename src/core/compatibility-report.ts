@@ -3,6 +3,7 @@ import {
   getCatalogProfile,
 } from "./printer-profile-catalog";
 import type { Diagnostic, Printer } from "./types";
+import { BridgeError } from "../i18n";
 
 const safeSteps = (diagnostic?: Diagnostic) =>
   (diagnostic?.steps || []).map((step) => {
@@ -46,6 +47,7 @@ export const createCompatibilityReport = (
     model: {
       selectedProfileId: catalogProfile?.id,
       selectedProfile: catalogProfile?.name,
+      reportedBrand: String(printer.reportedBrand || "").trim() || undefined,
       reportedModel: String(printer.reportedModel || "").trim() || undefined,
     },
     printer: {
@@ -85,5 +87,36 @@ export const createCompatibilityReport = (
           steps: safeSteps(diagnostic),
         }
       : undefined,
+  };
+};
+
+/** A small, connection-free artifact suitable for sharing a custom profile. */
+export const createLocalProfileExport = (printer: Printer) => {
+  const custom =
+    printer.printProfile.mode === "custom"
+      ? printer.printProfile.custom
+      : undefined;
+  const brand = String(printer.reportedBrand || "").trim();
+  const model = String(printer.reportedModel || "").trim();
+  if (!brand || !model || !custom)
+    throw new BridgeError("local_profile_export_unavailable");
+  return {
+    schemaVersion: 1,
+    kind: "pos-ticket-bridge-local-profile",
+    brand,
+    model,
+    widthMm: printer.anchoMm,
+    encoding: custom.encoding,
+    codeTable: custom.codeTable,
+    unicodeFallback: custom.unicodeFallback,
+    ...(custom.confirmation
+      ? {
+          confirmedAt: custom.confirmation.confirmedAt,
+          testSet: {
+            name: custom.confirmation.testSetName,
+            candidateId: custom.confirmation.candidateId,
+          },
+        }
+      : {}),
   };
 };

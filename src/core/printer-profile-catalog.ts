@@ -10,9 +10,12 @@ export type CatalogEncoding = {
 };
 export type CatalogPrinterProfile = {
   id: string;
+  brand?: string;
   name: LocalizedText;
   description: LocalizedText;
   selectable: boolean;
+  /** Omitted profiles work with either paper width supported by the app. */
+  paperWidths?: readonly (58 | 80)[];
   version: number;
   verifiedCoverage: PrinterCharacterCoverage[];
   ascii: CatalogEncoding;
@@ -44,6 +47,7 @@ export const printerProfileCatalog = [
   }),
   profile({
     id: "epson-escpos-usb",
+    brand: "Epson",
     name: { en: "Epson ESC/POS USB", es: "Epson ESC/POS USB" },
     description: {
       en: "Verified ESC/POS profile for Epson USB printers.",
@@ -64,15 +68,17 @@ export const printerProfileCatalog = [
   }),
   // This profile was confirmed on a physical XP-E260L over the network.
   // Network printers are intentionally never selected from their IP address;
-  // users choose this model explicitly and confirm the Latin test per unit.
+  // users choose this model explicitly before printing a general test ticket.
   profile({
     id: "xprinter-xp-e260l",
+    brand: "Xprinter",
     name: { en: "Xprinter XP-E260L", es: "Xprinter XP-E260L" },
     description: {
       en: "Verified ESC/POS profile for the XP-E260L.",
       es: "Perfil ESC/POS verificado para la XP-E260L.",
     },
     selectable: true,
+    paperWidths: [80],
     version: PROFILE_CATALOG_VERSION,
     verifiedCoverage: ["ascii", "spanish-latin"],
     ascii: { encoding: "CP437", codeTable: 0, nativePolicy: "ascii" },

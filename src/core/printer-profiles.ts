@@ -37,11 +37,6 @@ export type ResolvedPrintProfile = {
   columns: number;
 };
 
-export type ProfileResolutionOptions = {
-  /** Uses a candidate Latin table only while printing its validation ticket. */
-  allowUnverifiedSpanish?: boolean;
-};
-
 export const defaultPrinterLanguage = (
   systemLocale = Intl.DateTimeFormat().resolvedOptions().locale,
 ): PrinterLanguage => (/^en(?:[-_]|$)/i.test(systemLocale) ? "en" : "es");
@@ -58,21 +53,12 @@ const dimensions = (widthMm: 58 | 80) =>
     ? { rasterWidth: 384, columns: 32 }
     : { rasterWidth: 576, columns: 48 };
 
-const hasConfirmedSpanish = (printer: Printer, version: number) =>
-  printer.printProfile.validation?.["spanish-latin"]?.catalogVersion ===
-  version;
-
 const sourceFor = (id: string): ResolvedPrintProfile["source"] =>
-  id === "unlisted-safe"
-    ? "safe"
-    : "catalog";
+  id === "unlisted-safe" ? "safe" : "catalog";
 
 export const defaultAutomaticProfileId = () => "unlisted-safe";
 
-export const resolvePrintProfile = (
-  printer: Printer,
-  options: ProfileResolutionOptions = {},
-): ResolvedPrintProfile => {
+export const resolvePrintProfile = (printer: Printer): ResolvedPrintProfile => {
   const dimensionsForPrinter = dimensions(printer.anchoMm);
   const language = printer.printProfile.language;
   if (printer.printProfile.mode === "custom") {
@@ -101,11 +87,8 @@ export const resolvePrintProfile = (
     suggestedCatalogProfileId(printer) ||
     defaultAutomaticProfileId();
   const catalogProfile = getCatalogProfile(profileId);
-  const spanishConfirmed = hasConfirmedSpanish(printer, catalogProfile.version);
   const shouldUseSpanishNative =
-    language === "es" &&
-    Boolean(catalogProfile.spanishLatin) &&
-    (spanishConfirmed || options.allowUnverifiedSpanish);
+    language === "es" && Boolean(catalogProfile.spanishLatin);
   const values = shouldUseSpanishNative
     ? catalogProfile.spanishLatin!
     : catalogProfile.ascii;
@@ -119,8 +102,7 @@ export const resolvePrintProfile = (
     nativePolicy: values.nativePolicy,
     source: sourceFor(catalogProfile.id),
     coverage: shouldUseSpanishNative ? "spanish-latin" : "ascii",
-    validation:
-      shouldUseSpanishNative && spanishConfirmed ? "confirmed" : "required",
+    validation: shouldUseSpanishNative ? "confirmed" : "required",
     catalogVersion: PROFILE_CATALOG_VERSION,
     initialization: catalogProfile.initialization,
     supportsRaster: catalogProfile.supportsRaster,

@@ -178,14 +178,64 @@ export async function discoverUsb() {
   }
 }
 
+type PairedBluetoothDevice = {
+  FriendlyName?: string;
+  InstanceId?: string;
+};
+
+const bluetoothAddress = (value: string) =>
+  value.match(/(?:DEV_|&0&)([0-9A-F]{12})(?:_|\\|$)/i)?.[1]?.toUpperCase();
+
+/** Resolves a Bluetooth serial port to the friendly name Windows stores for it. */
+export const pairedBluetoothNameForPort = (
+  pnpId: string | undefined,
+  devices: PairedBluetoothDevice[],
+) => {
+  const address = bluetoothAddress(pnpId || "");
+  if (!address) return undefined;
+  return devices
+    .find(
+      (device) =>
+        bluetoothAddress(device.InstanceId || "") === address &&
+        device.FriendlyName?.trim(),
+    )
+    ?.FriendlyName?.trim();
+};
+
+async function discoverWindowsPairedBluetoothDevices() {
+  if (process.platform !== "win32") return [] as PairedBluetoothDevice[];
+  try {
+    const script =
+      "Get-PnpDevice -Class Bluetooth | Where-Object { $_.InstanceId -match '^BTHENUM\\\\DEV_[0-9A-F]{12}\\\\' } | Select-Object FriendlyName,InstanceId | ConvertTo-Json -Compress";
+    const { stdout } = await exec(
+      "powershell",
+      ["-NoProfile", "-Command", script],
+      { windowsHide: true },
+    );
+    const result = stdout.trim()
+      ? (JSON.parse(stdout) as PairedBluetoothDevice | PairedBluetoothDevice[])
+      : [];
+    return Array.isArray(result) ? result : [result];
+  } catch {
+    return [] as PairedBluetoothDevice[];
+  }
+}
+
 export async function discoverBluetooth() {
   try {
     const Adapter = require("@node-escpos/serialport-adapter");
-    const ports = await Adapter.list();
+    const [ports, pairedDevices] = await Promise.all([
+      Adapter.list(),
+      discoverWindowsPairedBluetoothDevices(),
+    ]);
     return {
       items: ports.map((port: any) => ({
         id: "",
-        nombre: port.friendlyName || port.manufacturer || port.path,
+        nombre:
+          pairedBluetoothNameForPort(port.pnpId, pairedDevices) ||
+          port.friendlyName ||
+          port.manufacturer ||
+          port.path,
         tipo: "bluetooth" as const,
         anchoMm: 80 as const,
         printProfile: defaultPrintProfile(),

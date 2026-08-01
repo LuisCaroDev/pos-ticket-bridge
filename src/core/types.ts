@@ -16,6 +16,12 @@ export type CustomPrintProfile = {
   unicodeFallback: UnicodeFallback;
   /** Keeps the automatic profile's safe Unicode rule after customization. */
   automaticUnicodePolicy?: "encoding" | "ascii";
+  /** Local evidence for a character profile verified on this printer. */
+  confirmation?: {
+    confirmedAt: string;
+    testSetName: string;
+    candidateId: string;
+  };
 };
 export type PrintProfile = {
   language: PrinterLanguage;
@@ -25,6 +31,18 @@ export type PrintProfile = {
   /** Visual confirmations for the selected profile's character coverage. */
   validation?: ProfileValidation;
   custom?: CustomPrintProfile;
+  /** Reusable local profile applied to this printer, independent of transport. */
+  localProfileId?: string;
+};
+export type LocalPrintProfile = {
+  id: string;
+  name: string;
+  brand: string;
+  model: string;
+  language: PrinterLanguage;
+  widthMm: 58 | 80;
+  /** Custom profiles may be saved manually before they have been verified. */
+  values: CustomPrintProfile;
 };
 export type Printer = {
   id: string;
@@ -32,6 +50,7 @@ export type Printer = {
   tipo: PrinterType;
   anchoMm: 58 | 80;
   /** Optional make/model entered for an anonymous compatibility report. */
+  reportedBrand?: string;
   reportedModel?: string;
   printProfile: PrintProfile;
   abreCajon: boolean;
@@ -45,6 +64,7 @@ export type BridgeConfig = {
   allowedOrigins: string[];
   language: LanguageSetting;
   printers: Printer[];
+  localProfiles: LocalPrintProfile[];
 };
 export type PrintBlock = {
   type:

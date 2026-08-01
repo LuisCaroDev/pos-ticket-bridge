@@ -4,6 +4,12 @@ import { useForm } from "react-hook-form";
 import type { LanguageSetting, TranslationKey } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -12,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   defaultSettingsValues,
   settingsFormSchema,
@@ -76,10 +83,13 @@ export const SettingsDialog = memo(function SettingsDialog({
           <DialogTitle>{tr("advanced_settings")}</DialogTitle>
           <DialogDescription>{tr("settings_description")}</DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <label className="grid gap-1 text-sm font-medium">
-            {tr("language")}
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="settings-language">
+              {tr("language")}
+            </FieldLabel>
             <LanguageSelect
+              id="settings-language"
               value={selectedLanguage}
               includeSystem
               tr={tr}
@@ -87,31 +97,31 @@ export const SettingsDialog = memo(function SettingsDialog({
                 setValue("language", language, { shouldDirty: true })
               }
             />
-          </label>
-          <label className="grid gap-1 text-sm font-medium">
-            {tr("port")}
+          </Field>
+          <Field data-invalid={Boolean(error("port")) || undefined}>
+            <FieldLabel htmlFor="settings-port">{tr("port")}</FieldLabel>
             <Input
+              id="settings-port"
               {...register("port")}
               type="number"
               aria-invalid={Boolean(error("port"))}
             />
-            {error("port") && (
-              <p className="text-xs text-destructive">{error("port")}</p>
-            )}
-          </label>
-          <label className="grid gap-1 text-sm font-medium">
-            {tr("allowed_origins")}
-            <textarea
+            {error("port") && <FieldError>{error("port")}</FieldError>}
+          </Field>
+          <Field data-invalid={Boolean(error("origins")) || undefined}>
+            <FieldLabel htmlFor="settings-origins">
+              {tr("allowed_origins")}
+            </FieldLabel>
+            <Textarea
+              id="settings-origins"
               {...register("origins")}
-              className="min-h-28 rounded-lg border bg-transparent px-2.5 py-2 text-sm"
+              className="min-h-28"
               placeholder="https://pos.ejemplo.com"
               aria-invalid={Boolean(error("origins"))}
             />
-            {error("origins") && (
-              <p className="text-xs text-destructive">{error("origins")}</p>
-            )}
-          </label>
-        </div>
+            {error("origins") && <FieldError>{error("origins")}</FieldError>}
+          </Field>
+        </FieldGroup>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {tr("cancel")}

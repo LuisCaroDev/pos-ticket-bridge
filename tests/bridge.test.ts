@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigStore } from "../src/core/config-store";
-import { discoverUsb } from "../src/core/discovery";
+import { discoverUsb, pairedBluetoothNameForPort } from "../src/core/discovery";
 import { configurePrinterForProfile, printJob } from "../src/core/printer";
 import {
   defaultPrinterLanguage,
@@ -12,8 +12,21 @@ import {
   shouldRasterizeText,
 } from "../src/core/printer-profiles";
 import { createBridgeServer } from "../src/core/server";
-import { createCompatibilityReport } from "../src/core/compatibility-report";
-import { resolveLanguage, t } from "../src/i18n";
+import {
+  createCompatibilityReport,
+  createLocalProfileExport,
+} from "../src/core/compatibility-report";
+import {
+  parseCharacterProfileTestSet,
+  validateCharacterProfileCandidate,
+  validateCharacterProfileTestSet,
+} from "../src/core/character-profile-tests";
+import {
+  characterProfileTrialTexts,
+  resolveLanguage,
+  t,
+  testPrintTexts,
+} from "../src/i18n";
 import {
   diagnosticsForForm,
   formFor,
@@ -38,6 +51,23 @@ afterEach(() => {
 });
 
 describe("POS Ticket Bridge", () => {
+  it("uses the paired Bluetooth device name for a serial port when available", () => {
+    const pnpId =
+      "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_LOCALMFG&08E7\\7&113820F4&0&DC0D30F2D71D_C00000000";
+    const pairedDevices = [
+      {
+        FriendlyName: "Printer001",
+        InstanceId:
+          "BTHENUM\\DEV_DC0D30F2D71D\\7&2C945B11&0&BLUETOOTHDEVICE_DC0D30F2D71D",
+      },
+    ];
+
+    expect(pairedBluetoothNameForPort(pnpId, pairedDevices)).toBe("Printer001");
+    expect(pairedBluetoothNameForPort("BTHENUM\\unknown", pairedDevices)).toBe(
+      undefined,
+    );
+  });
+
   it("validates required printer fields by transport", () => {
     const invalid = printerFormSchema(false).safeParse({
       nombre: " ",
@@ -94,6 +124,401 @@ describe("POS Ticket Bridge", () => {
   it("renders diagnostic translations with valid Spanish characters", () => {
     expect(t("es", "print_diagnostics")).toBe("Diagnóstico de impresión");
     expect(t("es", "diagnostic_cause")).toBe("Causa técnica");
+  });
+
+  it("builds grouped test tickets for each printing language", () => {
+    expect(testPrintTexts("es", "Caja 1")).toMatchObject({
+      ascii: expect.stringContaining("ASCII:"),
+      spanish: expect.stringContaining("áéíóúüñÑ"),
+      symbols: expect.stringContaining("€ $ S/"),
+    });
+    expect(testPrintTexts("en", "Till 1")).toMatchObject({
+      ascii: expect.stringContaining("ASCII:"),
+      spanish: undefined,
+      symbols: expect.stringContaining("€ $ S/"),
+    });
+  });
+
+  it("uses the same grouped characters for profile trials", () => {
+    expect(
+      characterProfileTrialTexts("es", {
+        id: "CP858-T19",
+        encoding: "CP858",
+        codeTable: 19,
+      }),
+    ).toMatchObject({
+      ascii: expect.stringContaining("ASCII:"),
+      spanish: expect.stringContaining("áéíóúüñÑ"),
+      symbols: expect.stringContaining("€ $ S/"),
+    });
+  });
+
+  it("validates strict, bounded character-profile test sets", () => {
+    expect(
+      parseCharacterProfileTestSet({
+        version: 1,
+        name: "Generic ESC/POS",
+        candidates: [{ id: "CP858-T19", encoding: "cp858", codeTable: 19 }],
+      }),
+    ).toMatchObject({ candidates: [{ encoding: "CP858", codeTable: 19 }] });
+    expect(() =>
+      parseCharacterProfileTestSet({
+        version: 1,
+        name: "Duplicates",
+        candidates: [
+          { id: "same", encoding: "CP850", codeTable: 2 },
+          { id: "same", encoding: "CP858", codeTable: 19 },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      parseCharacterProfileTestSet({
+        version: 1,
+        name: "Unsafe",
+        candidates: [
+          { id: "raw", encoding: "CP858", codeTable: 256, raw: "\\u001b@" },
+        ],
+      }),
+    ).toThrow();
+    expect(() =>
+      validateCharacterProfileCandidate(
+        { id: "unknown", encoding: "NOT-A-CODEPAGE", codeTable: 1 },
+        () => false,
+      ),
+    ).toThrow();
+    expect(() =>
+      validateCharacterProfileTestSet(
+        {
+          version: 1,
+          name: "Unsupported",
+          candidates: [
+            { id: "unknown", encoding: "NOT-A-CODEPAGE", codeTable: 1 },
+          ],
+        },
+        () => false,
+      ),
+    ).toThrow();
+  });
+
+  it("exports only the confirmed local profile metadata", () => {
+    const profile = createLocalProfileExport({
+      id: "secret-printer",
+      nombre: "Caja privada",
+      tipo: "network",
+      anchoMm: 80,
+      reportedBrand: "ACME",
+      reportedModel: "Generic 80 mm",
+      printProfile: {
+        language: "es",
+        mode: "custom",
+        custom: {
+          encoding: "CP858",
+          codeTable: 19,
+          unicodeFallback: "auto",
+          confirmation: {
+            confirmedAt: "2026-07-31T00:00:00.000Z",
+            testSetName: "Defaults",
+            candidateId: "CP858-T19",
+          },
+        },
+      },
+      abreCajon: false,
+      enabled: true,
+      connection: { host: "192.168.1.25", port: 9100, token: "secret" },
+    });
+    expect(profile).toMatchObject({
+      brand: "ACME",
+      model: "Generic 80 mm",
+      encoding: "CP858",
+      codeTable: 19,
+      confirmedAt: "2026-07-31T00:00:00.000Z",
+    });
+    expect(JSON.stringify(profile)).not.toMatch(/192\.168|secret|Caja privada/);
+  });
+
+  it("persists a confirmed local custom profile independently from its printer", () => {
+    const { store } = fixture();
+    const profile = store.saveLocalProfile({
+      brand: "ACME",
+      model: "Generic 80 mm",
+      language: "es",
+      widthMm: 80,
+      values: {
+        encoding: "CP858",
+        codeTable: 19,
+        unicodeFallback: "auto",
+        confirmation: {
+          confirmedAt: "2026-07-31T00:00:00.000Z",
+          testSetName: "Defaults",
+          candidateId: "CP858-T19",
+        },
+      },
+    });
+    const saved = store.create({
+      nombre: "Caja",
+      tipo: "network",
+      connection: { host: "127.0.0.1", port: 9100 },
+      reportedBrand: "ACME",
+      reportedModel: "Generic 80 mm",
+      printProfile: {
+        language: "es",
+        mode: "custom",
+        custom: { ...profile.values },
+        localProfileId: profile.id,
+      },
+    });
+    expect(saved.printers[0].printProfile).toMatchObject({
+      mode: "custom",
+      localProfileId: "local-acme-generic-80-mm-80mm-es",
+      custom: {
+        confirmation: { candidateId: "CP858-T19" },
+      },
+    });
+    expect(saved.localProfiles).toMatchObject([
+      {
+        id: "local-acme-generic-80-mm-80mm-es",
+        brand: "ACME",
+        model: "Generic 80 mm",
+        values: { encoding: "CP858", codeTable: 19 },
+      },
+    ]);
+    expect(
+      new ConfigStore(store.path()).get().printers[0].printProfile,
+    ).toMatchObject({ custom: { confirmation: { testSetName: "Defaults" } } });
+
+    const reused = store.create({
+      nombre: "Caja USB",
+      tipo: "usb",
+      connection: {
+        systemPrinter: "POS USB",
+        port: "USB001",
+        vendorId: "",
+        productId: "",
+      },
+      anchoMm: 80,
+      printProfile: {
+        language: "en",
+        mode: "custom",
+        localProfileId: profile.id,
+        custom: { encoding: "CP437", codeTable: 0, unicodeFallback: "auto" },
+      },
+    });
+    expect(reused.printers[1]).toMatchObject({
+      tipo: "usb",
+      printProfile: {
+        localProfileId: profile.id,
+        custom: { encoding: "CP858", codeTable: 19 },
+      },
+    });
+
+    store.saveLocalProfile({
+      brand: "ACME",
+      model: "Generic 80 mm",
+      language: "es",
+      widthMm: 80,
+      values: { encoding: "CP850", codeTable: 2, unicodeFallback: "auto" },
+    });
+    expect(
+      store
+        .get()
+        .printers.map((printer) => printer.printProfile.custom?.encoding),
+    ).toEqual(["CP850", "CP850"]);
+  });
+
+  it("deletes a local profile while preserving attached printer settings", () => {
+    const { store } = fixture();
+    const profile = store.saveLocalProfile({
+      brand: "ACME",
+      model: "TP-80",
+      language: "es",
+      widthMm: 80,
+      values: { encoding: "CP858", codeTable: 19, unicodeFallback: "auto" },
+    });
+    const created = store.create({
+      nombre: "Caja",
+      tipo: "network",
+      connection: { host: "192.168.1.20", port: 9100 },
+      printProfile: {
+        language: "es",
+        mode: "custom",
+        localProfileId: profile.id,
+        custom: { ...profile.values },
+      },
+    });
+
+    expect(store.deleteLocalProfile(profile.id)).toEqual({
+      id: profile.id,
+      detachedPrinterIds: [created.printers[0].id],
+    });
+    expect(store.get().localProfiles).toEqual([]);
+    expect(store.get().printers[0].printProfile).toMatchObject({
+      mode: "custom",
+      custom: { encoding: "CP858", codeTable: 19 },
+    });
+    expect(store.get().printers[0].printProfile).not.toHaveProperty(
+      "localProfileId",
+    );
+
+    store.update(created.printers[0].id, {
+      printProfile: {
+        language: "es",
+        mode: "custom",
+        custom: { encoding: "CP850", codeTable: 2, unicodeFallback: "auto" },
+      },
+    });
+    expect(store.get().localProfiles).toEqual([]);
+  });
+
+  it("imports a shared local profile for reuse by another printer", () => {
+    const { store } = fixture();
+    const imported = store.importLocalProfile({
+      schemaVersion: 1,
+      kind: "pos-ticket-bridge-local-profile",
+      brand: "ACME",
+      model: "Generic 80 mm",
+      widthMm: 80,
+      encoding: "CP858",
+      codeTable: 19,
+      unicodeFallback: "auto",
+      confirmedAt: "2026-07-31T00:00:00.000Z",
+      testSet: { name: "Defaults", candidateId: "CP858-T19" },
+    });
+
+    expect(imported).toMatchObject({
+      id: "local-acme-generic-80-mm-80mm-es",
+      values: { encoding: "CP858", codeTable: 19 },
+    });
+    expect(new ConfigStore(store.path()).get().localProfiles).toHaveLength(1);
+  });
+
+  it("migrates confirmed profiles from existing printers into the local registry", () => {
+    const { store } = fixture();
+    fs.writeFileSync(
+      store.path(),
+      JSON.stringify({
+        version: 1,
+        port: 9977,
+        token: "a".repeat(48),
+        allowedOrigins: [],
+        language: "es",
+        printers: [
+          {
+            id: "caja",
+            nombre: "Caja",
+            tipo: "network",
+            anchoMm: 80,
+            reportedBrand: "ACME",
+            reportedModel: "Generic 80 mm",
+            printProfile: {
+              language: "es",
+              mode: "custom",
+              custom: {
+                encoding: "CP858",
+                codeTable: 19,
+                unicodeFallback: "auto",
+                confirmation: {
+                  confirmedAt: "2026-07-31T00:00:00.000Z",
+                  testSetName: "Defaults",
+                  candidateId: "CP858-T19",
+                },
+              },
+            },
+            abreCajon: false,
+            enabled: true,
+            connection: { host: "127.0.0.1", port: 9100 },
+          },
+        ],
+      }),
+    );
+
+    const migrated = new ConfigStore(store.path()).get();
+    expect(migrated.localProfiles).toHaveLength(1);
+    expect(migrated.printers[0].printProfile.localProfileId).toBe(
+      "local-acme-generic-80-mm-80mm-es",
+    );
+  });
+
+  it("keeps legacy local profile IDs usable", () => {
+    const { store } = fixture();
+    const profile = store.saveLocalProfile({
+      brand: "ACME",
+      model: "TP-80",
+      language: "es",
+      widthMm: 80,
+      values: { encoding: "CP858", codeTable: 19, unicodeFallback: "auto" },
+    });
+    store.create({
+      nombre: "Caja",
+      tipo: "network",
+      connection: { host: "127.0.0.1", port: 9100 },
+      reportedBrand: "ACME",
+      reportedModel: "TP-80",
+      printProfile: {
+        language: "es",
+        mode: "custom",
+        custom: { ...profile.values },
+        localProfileId: profile.id,
+      },
+    });
+    const legacy = structuredClone(store.get());
+    const legacyId = "local-acme-tp-80-80mm";
+    legacy.localProfiles[0].id = legacyId;
+    const legacyPrinter = legacy.printers[0];
+    if (legacyPrinter.printProfile.mode !== "custom")
+      throw new Error("Expected a custom profile");
+    legacyPrinter.printProfile.localProfileId = legacyId;
+    fs.writeFileSync(store.path(), JSON.stringify(legacy));
+
+    const loaded = new ConfigStore(store.path()).get();
+    expect(loaded.localProfiles[0].id).toBe(legacyId);
+    expect(loaded.printers[0].printProfile).toMatchObject({
+      language: "es",
+      localProfileId: legacyId,
+      custom: { encoding: "CP858", codeTable: 19 },
+    });
+  });
+
+  it("updates a custom profile by make, model, and paper width", () => {
+    const { store } = fixture();
+    const first = store.saveLocalProfile({
+      brand: "ACME",
+      model: "TP-80",
+      language: "es",
+      widthMm: 80,
+      values: { encoding: "CP850", codeTable: 2, unicodeFallback: "auto" },
+    });
+    const updated = store.saveLocalProfile({
+      brand: "acme",
+      model: "tp-80",
+      language: "es",
+      widthMm: 80,
+      values: { encoding: "CP858", codeTable: 19, unicodeFallback: "auto" },
+    });
+    const narrow = store.saveLocalProfile({
+      brand: "ACME",
+      model: "TP-80",
+      language: "es",
+      widthMm: 58,
+      values: { encoding: "CP437", codeTable: 0, unicodeFallback: "auto" },
+    });
+    const english = store.saveLocalProfile({
+      brand: "ACME",
+      model: "TP-80",
+      language: "en",
+      widthMm: 80,
+      values: { encoding: "CP437", codeTable: 0, unicodeFallback: "auto" },
+    });
+
+    expect(updated.id).toBe(first.id);
+    expect(narrow.id).not.toBe(first.id);
+    expect(english.id).not.toBe(first.id);
+    expect(store.get().localProfiles).toHaveLength(3);
+    expect(store.get().localProfiles).toContainEqual(
+      expect.objectContaining({
+        id: first.id,
+        values: expect.objectContaining({ encoding: "CP858" }),
+      }),
+    );
   });
 
   it("uses full translated names for language select values", () => {
@@ -276,6 +701,11 @@ describe("POS Ticket Bridge", () => {
         nombre: "Caja",
         tipo: "network",
         connection: { host: "127.0.0.1", port: address.port },
+        printProfile: {
+          language: "es",
+          mode: "auto",
+          profileId: "xprinter-xp-e260l",
+        },
       });
       const printer = created.printers[0];
       const printed = await bridge.app.inject({
@@ -291,7 +721,7 @@ describe("POS Ticket Bridge", () => {
 
       const draft = await bridge.testPrinter(
         { ...printer, id: "", nombre: "Borrador" },
-        { draftSessionId: "draft-1", operation: "spanish-validation" },
+        { draftSessionId: "draft-1" },
       );
       expect(draft.ok).toBe(true);
       expect((await bridge.status()).diagnostics).toEqual(
@@ -302,14 +732,14 @@ describe("POS Ticket Bridge", () => {
           }),
           expect.objectContaining({
             draftSessionId: "draft-1",
-            operation: "spanish-validation",
+            operation: "test-draft",
           }),
         ]),
       );
 
       bridge.promoteDraftDiagnostics("draft-1", printer.id);
       const promoted = (await bridge.status()).diagnostics.find(
-        (diagnostic) => diagnostic.operation === "spanish-validation",
+        (diagnostic) => diagnostic.operation === "test-draft",
       );
       expect(promoted).toMatchObject({ printerId: printer.id });
       expect(promoted).not.toHaveProperty("draftSessionId");
@@ -335,6 +765,96 @@ describe("POS Ticket Bridge", () => {
     }
   });
 
+  it("runs a temporary native character-profile trial and records its candidate", async () => {
+    const { bridge } = fixture();
+    const listener = net.createServer((socket) => socket.resume());
+    await new Promise<void>((resolve) =>
+      listener.listen(0, "127.0.0.1", resolve),
+    );
+    const address = listener.address();
+    if (!address || typeof address === "string")
+      throw new Error("No test port");
+    try {
+      const result = await bridge.runCharacterProfileTrial(
+        {
+          id: "",
+          nombre: "Borrador",
+          tipo: "network",
+          anchoMm: 80,
+          abreCajon: false,
+          enabled: true,
+          printProfile: {
+            language: "es",
+            mode: "auto",
+            profileId: "unlisted-safe",
+          },
+          connection: { host: "127.0.0.1", port: address.port },
+        },
+        { id: "CP858-T19", encoding: "CP858", codeTable: 19 },
+        "profile-trial",
+      );
+      expect(result).toMatchObject({ ok: true });
+      expect(result.diagnostic.steps).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            stage: "character_profile_candidate",
+            id: "CP858-T19",
+            encoding: "CP858",
+            codeTable: 19,
+          }),
+          expect.objectContaining({
+            stage: "print_profile",
+            encoding: "CP858",
+            codeTable: 19,
+            unicodeFallback: "native",
+          }),
+        ]),
+      );
+    } finally {
+      await bridge.stop();
+      await new Promise<void>((resolve) => listener.close(() => resolve()));
+    }
+  });
+
+  it("records an invalid character-profile candidate as a failed trial", async () => {
+    const { bridge } = fixture();
+    try {
+      const result = await bridge.runCharacterProfileTrial(
+        {
+          id: "",
+          nombre: "Borrador",
+          tipo: "network",
+          anchoMm: 80,
+          abreCajon: false,
+          enabled: true,
+          printProfile: {
+            language: "es",
+            mode: "auto",
+            profileId: "unlisted-safe",
+          },
+          connection: { host: "127.0.0.1", port: 9100 },
+        },
+        { id: "invalid", encoding: "NOT-AN-ENCODING", codeTable: 0 },
+        "invalid-profile-trial",
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "invalid_character_profile_test_set" },
+      });
+      expect((await bridge.status()).diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: "character-profile-trial",
+            draftSessionId: "invalid-profile-trial",
+            ok: false,
+          }),
+        ]),
+      );
+    } finally {
+      await bridge.stop();
+    }
+  });
+
   it("discards draft diagnostics and starts each bridge without history", async () => {
     const { store, bridge } = fixture();
     const listener = net.createServer((socket) => socket.resume());
@@ -350,6 +870,11 @@ describe("POS Ticket Bridge", () => {
         nombre: "Borrador",
         tipo: "network",
         connection: { host: "127.0.0.1", port: address.port },
+        printProfile: {
+          language: "es",
+          mode: "auto",
+          profileId: "xprinter-xp-e260l",
+        },
       }).printers[0];
       const result = await bridge.testPrinter(
         { ...printer, id: "" },
@@ -441,9 +966,7 @@ describe("POS Ticket Bridge", () => {
       printProfile: { language: "es" as const, mode: "auto" as const },
       connection: { vendorId: "0x04b8", productId: "0x0202" },
     };
-    const profile = resolvePrintProfile(printer, {
-      allowUnverifiedSpanish: true,
-    });
+    const profile = resolvePrintProfile(printer);
     const calls: Array<[string, string | number]> = [];
     configurePrinterForProfile(
       {
@@ -469,23 +992,20 @@ describe("POS Ticket Bridge", () => {
   });
 
   it("uses the verified Xprinter XP-E260L Spanish character table", () => {
-    const profile = resolvePrintProfile(
-      {
-        id: "xp-e260l",
-        nombre: "XP-E260L",
-        tipo: "network",
-        anchoMm: 80,
-        abreCajon: false,
-        enabled: true,
-        printProfile: {
-          language: "es",
-          mode: "auto",
-          profileId: "xprinter-xp-e260l",
-        },
-        connection: { host: "192.168.1.20", port: 9100 },
+    const profile = resolvePrintProfile({
+      id: "xp-e260l",
+      nombre: "XP-E260L",
+      tipo: "network",
+      anchoMm: 80,
+      abreCajon: false,
+      enabled: true,
+      printProfile: {
+        language: "es",
+        mode: "auto",
+        profileId: "xprinter-xp-e260l",
       },
-      { allowUnverifiedSpanish: true },
-    );
+      connection: { host: "192.168.1.20", port: 9100 },
+    });
 
     expect(profile).toMatchObject({
       id: "xprinter-xp-e260l",
@@ -495,7 +1015,7 @@ describe("POS Ticket Bridge", () => {
     });
   });
 
-  it("uses the safe unlisted profile until Spanish support is verified", () => {
+  it("uses the safe unlisted profile when Spanish support is unavailable", () => {
     const profile = resolvePrintProfile({
       id: "generic",
       nombre: "POS",
@@ -515,7 +1035,7 @@ describe("POS Ticket Bridge", () => {
     expect(shouldRasterizeText(profile, "Caja 漢字")).toBe(true);
   });
 
-  it("requires Spanish confirmation before a catalog profile prints Latin natively", () => {
+  it("uses catalog Spanish support without per-printer confirmation", () => {
     const printer = {
       id: "epson",
       nombre: "Epson",
@@ -530,16 +1050,7 @@ describe("POS Ticket Bridge", () => {
       },
       connection: { vendorId: "0x04b8", productId: "0x0202" },
     };
-    const unconfirmed = resolvePrintProfile(printer);
-    expect(unconfirmed).toMatchObject({
-      encoding: "CP437",
-      codeTable: 0,
-      coverage: "ascii",
-      validation: "required",
-    });
-    expect(shouldRasterizeText(unconfirmed, "José")).toBe(true);
-
-    const confirmed = resolvePrintProfile({
+    const profile = resolvePrintProfile({
       ...printer,
       printProfile: {
         ...printer.printProfile,
@@ -551,14 +1062,22 @@ describe("POS Ticket Bridge", () => {
         },
       },
     });
-    expect(confirmed).toMatchObject({
+    expect(profile).toMatchObject({
       encoding: "CP850",
       codeTable: 2,
       coverage: "spanish-latin",
       validation: "confirmed",
     });
-    expect(shouldRasterizeText(confirmed, "José")).toBe(false);
-    expect(shouldRasterizeText(confirmed, "€")).toBe(true);
+    expect(shouldRasterizeText(profile, "José")).toBe(false);
+    expect(shouldRasterizeText(profile, "€")).toBe(true);
+
+    const profileWithoutLegacyConfirmation = resolvePrintProfile(printer);
+    expect(profileWithoutLegacyConfirmation).toMatchObject({
+      encoding: "CP850",
+      codeTable: 2,
+      coverage: "spanish-latin",
+      validation: "confirmed",
+    });
   });
 
   it("keeps English native for ASCII and falls back for extended characters", () => {
@@ -605,12 +1124,6 @@ describe("POS Ticket Bridge", () => {
             language: "es",
             mode: "auto",
             profileId: "xprinter-xp-e260l",
-            validation: {
-              "spanish-latin": {
-                catalogVersion: 1,
-                confirmedAt: "2026-07-31T00:00:00.000Z",
-              },
-            },
           },
           connection: { host: "127.0.0.1", port: address.port },
         },
@@ -673,7 +1186,7 @@ describe("POS Ticket Bridge", () => {
     });
   });
 
-  it("keeps the selected model but invalidates Spanish confirmation on language change", () => {
+  it("retains legacy character confirmation metadata without using it", () => {
     const { store } = fixture();
     const created = store.create({
       nombre: "Epson",
@@ -698,6 +1211,12 @@ describe("POS Ticket Bridge", () => {
       language: "en",
       mode: "auto",
       profileId: "epson-escpos-usb",
+      validation: {
+        "spanish-latin": {
+          catalogVersion: 1,
+          confirmedAt: "2026-07-31T00:00:00.000Z",
+        },
+      },
     });
   });
 

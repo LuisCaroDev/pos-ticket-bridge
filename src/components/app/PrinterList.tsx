@@ -5,6 +5,7 @@ import {
   Pencil,
   Plus,
   Printer,
+  ScrollText,
   Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -17,9 +18,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { translateMessage } from "@/i18n";
-import { connectionLabel } from "./printer-utils";
+import { connectionLabel, diagnosticsForForm } from "./printer-utils";
 import { useBridge } from "@/contexts/BridgeContext";
 import { useI18n } from "@/contexts/I18nContext";
+import { usePrintDiagnostics } from "@/contexts/PrintDiagnosticsContext";
 
 type PrinterListProps = {
   onCreate: () => void;
@@ -30,8 +32,9 @@ export const PrinterList = memo(function PrinterList({
   onCreate,
   onEdit,
 }: PrinterListProps) {
-  const { busy, deletePrinter, openDrawer, printers, testPrinter } =
+  const { busy, deletePrinter, openDrawer, printers, status, testPrinter } =
     useBridge();
+  const { openDiagnostics } = usePrintDiagnostics();
   const { language, tr } = useI18n();
   return (
     <Card>
@@ -50,7 +53,7 @@ export const PrinterList = memo(function PrinterList({
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="flex flex-col gap-3">
         {!printers.length && (
           <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
             {tr("no_printers")}
@@ -91,7 +94,7 @@ export const PrinterList = memo(function PrinterList({
                 )}
                 <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
                   {printer.runtime?.connection?.ok && (
-                    <CheckCircle2 className="size-3 text-emerald-600" />
+                    <CheckCircle2 className="size-3" />
                   )}
                   {translateMessage(
                     language,
@@ -119,6 +122,24 @@ export const PrinterList = memo(function PrinterList({
                 >
                   <Banknote data-icon="inline-start" />
                   {tr("open_drawer")}
+                </Button>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={tr("print_diagnostics")}
+                  title={tr("print_diagnostics")}
+                  onClick={() =>
+                    openDiagnostics({
+                      title: printer.nombre,
+                      diagnostics: diagnosticsForForm(
+                        status?.diagnostics || [],
+                        printer.id,
+                        undefined,
+                      ),
+                    })
+                  }
+                >
+                  <ScrollText />
                 </Button>
                 <Button
                   size="icon-sm"

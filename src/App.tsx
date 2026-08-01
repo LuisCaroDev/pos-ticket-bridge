@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AppHeader } from "@/components/app/AppHeader";
 import { BridgeAccessCards } from "@/components/app/BridgeAccessCards";
 import { DiscoveryPanel } from "@/components/app/DiscoveryPanel";
@@ -14,8 +14,14 @@ import {
   printerForSaving,
 } from "@/components/app/printer-utils";
 import type { PrinterForm } from "@/components/app/types";
+import type {
+  CharacterProfileCandidate,
+  CharacterProfileTestSet,
+} from "@/core/character-profile-tests";
 import { BridgeProvider, useBridge } from "@/contexts/BridgeContext";
 import { I18nProvider, useI18n } from "@/contexts/I18nContext";
+import { PrintDiagnosticsProvider } from "@/contexts/PrintDiagnosticsContext";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 function AppContent() {
   const [form, setForm] = useState<PrinterForm>();
@@ -103,80 +109,138 @@ function AppContent() {
     );
     if (saved) closeForm(false);
   }, [closeForm, draftSessionId, form, perform]);
-  const testDraft = useCallback(
-    async (operation: "test-draft" | "spanish-validation") => {
-      if (!form) return;
+  const testDraft = useCallback(async () => {
+    if (!form) return;
+    setDraftDiagnostic(undefined);
+    const result = await perform("test-draft", () =>
+      window.bridge.testPrinter(form, { draftSessionId }),
+    );
+    if (!result) return;
+    setDraftDiagnostic(result.diagnostic);
+    if (!result.ok) {
+      reportMessage(result.error);
+      return;
+    }
+    setNotice(tr("test_sent"));
+  }, [draftSessionId, form, perform, reportMessage, setNotice, tr]);
+  const runCharacterProfileTrial = useCallback(
+    async (candidate: CharacterProfileCandidate) => {
+      if (!form) return false;
       setDraftDiagnostic(undefined);
-      const result = await perform("test-draft", () =>
-        window.bridge.testPrinter(form, { draftSessionId, operation }),
+      const result = await perform("character-profile-trial", () =>
+        window.bridge.runCharacterProfileTrial(form, candidate, draftSessionId),
       );
-      if (!result) return;
+      if (!result) return false;
       setDraftDiagnostic(result.diagnostic);
       if (!result.ok) {
         reportMessage(result.error);
-        return;
+        return false;
       }
-      setNotice(tr("test_sent"));
+      setNotice(tr("character_profile_trial_sent"));
+      return true;
     },
     [draftSessionId, form, perform, reportMessage, setNotice, tr],
   );
-  const confirmSpanishValidation = useCallback(
-    (catalogVersion: number) => {
-      if (!form) return;
-      setForm({
-        ...form,
-        printProfile: {
-          ...form.printProfile,
-          validation: {
-            ...form.printProfile.validation,
-            "spanish-latin": {
-              catalogVersion,
-              confirmedAt: new Date().toISOString(),
-            },
-          },
-        },
-      });
-      setNotice(tr("spanish_validation_confirmed"));
-    },
-    [form, setNotice, tr],
+  const validateCharacterProfileTestSet = useCallback(
+    (testSet: CharacterProfileTestSet) =>
+      perform("validate-character-profile-test-set", () =>
+        window.bridge.validateCharacterProfileTestSet(testSet),
+      ),
+    [perform],
   );
-  const exportCompatibilityReport = useCallback(async () => {
-    if (!form) return;
-    const latestDiagnostic =
-      draftDiagnostic ||
-      (status?.diagnostics || []).find((entry: any) =>
-        form.id
-          ? entry.printerId === form.id
-          : entry.draftSessionId === draftSessionId,
+  const saveLocalProfile = useCallback(
+    async (input: unknown) => {
+      if (typeof window.bridge.saveLocalProfile !== "function") {
+        setNotice(tr("profile_save_restart_required"));
+        return undefined;
+      }
+      const saved = await perform("save-local-profile", () =>
+        window.bridge.saveLocalProfile(input),
       );
-    const content = await perform("export-report", async () => {
-      const report = await window.bridge.compatibilityReport(
-        form,
-        latestDiagnostic,
+      if (!saved) return undefined;
+      if (form) await loadProfileCatalog(form);
+      setNotice(tr("local_profile_saved"));
+      return saved;
+    },
+    [form, loadProfileCatalog, perform, setNotice, tr],
+  );
+  const exportLocalProfile = useCallback(
+    async (target: "clipboard" | "file") => {
+      if (!form) return false;
+      const content = await perform(
+        `export-local-profile-${target}`,
+        async () => {
+          const profile = await window.bridge.exportLocalProfile(form);
+          const next = `${JSON.stringify(profile, null, 2)}\n`;
+          if (target === "clipboard") await window.bridge.copy(next);
+          return next;
+        },
       );
-      const next = `${JSON.stringify(report, null, 2)}\n`;
-      await window.bridge.copy(next);
-      return next;
-    });
-    if (!content) return;
-    const url = URL.createObjectURL(
-      new Blob([content], { type: "application/json" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "pos-ticket-bridge-compatibility.json";
-    link.click();
-    URL.revokeObjectURL(url);
-    setNotice(tr("report_exported"));
-  }, [
-    draftDiagnostic,
-    draftSessionId,
-    form,
-    perform,
-    setNotice,
-    status?.diagnostics,
-    tr,
-  ]);
+      if (!content) return false;
+      if (target === "file") {
+        const url = URL.createObjectURL(
+          new Blob([content], { type: "application/json" }),
+        );
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "pos-ticket-bridge-local-profile.json";
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+      setNotice(
+        tr(
+          target === "clipboard"
+            ? "local_profile_copied"
+            : "local_profile_downloaded",
+        ),
+      );
+      return true;
+    },
+    [form, perform, setNotice, tr],
+  );
+  const importLocalProfile = useCallback(
+    async (input: unknown) => {
+      const imported = await perform("import-local-profile", () =>
+        window.bridge.importLocalProfile(input),
+      );
+      if (!imported) return false;
+      if (form) await loadProfileCatalog(form);
+      setNotice(tr("local_profile_imported"));
+      return true;
+    },
+    [form, loadProfileCatalog, perform, setNotice, tr],
+  );
+  const deleteLocalProfile = useCallback(
+    async (profileId: string) => {
+      const deleted = await perform("delete-local-profile", () =>
+        window.bridge.deleteLocalProfile(profileId),
+      );
+      if (!deleted) return false;
+      const nextForm =
+        form?.printProfile.mode === "custom" &&
+        form.printProfile.localProfileId === profileId
+          ? {
+              ...form,
+              printProfile: {
+                ...form.printProfile,
+                localProfileId: undefined,
+              },
+            }
+          : form;
+      if (nextForm !== form) {
+        setDraftDiagnostic(undefined);
+        setForm(nextForm);
+      }
+      if (nextForm) await loadProfileCatalog(nextForm);
+      setNotice(tr("local_profile_deleted"));
+      return true;
+    },
+    [form, loadProfileCatalog, perform, setNotice, tr],
+  );
+  const pasteLocalProfile = useCallback(async () => {
+    const content = await window.bridge.paste();
+    return importLocalProfile(JSON.parse(content));
+  }, [importLocalProfile]);
   const formDiagnostics = useMemo(
     () =>
       diagnosticsForForm(
@@ -192,21 +256,17 @@ function AppContent() {
     <>
       <AppHeader onOpenSettings={() => setSettingsOpen(true)} />
       {error && (
-        <Card className="border-destructive/40">
-          <CardContent className="p-4 text-sm text-destructive">
-            {error}
-          </CardContent>
-        </Card>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
       {notice && (
-        <Card className="border-emerald-300">
-          <CardContent className="p-4 text-sm text-emerald-700">
-            {notice}
-          </CardContent>
-        </Card>
+        <Alert>
+          <AlertDescription>{notice}</AlertDescription>
+        </Alert>
       )}
       <BridgeAccessCards />
-      <section className="space-y-5">
+      <section className="flex flex-col gap-5">
         <PrinterList onCreate={() => openCreate()} onEdit={openEdit} />
         <DiscoveryPanel onUseResult={openCreateFromDiscovery} />
       </section>
@@ -217,15 +277,19 @@ function AppContent() {
       form={form}
       detected={detectedCreation}
       diagnostics={formDiagnostics}
-      draftDiagnostic={draftDiagnostic}
       profileCatalog={profileCatalog}
       isWindows={isWindows}
       onClose={closeForm}
       onFormChange={setForm}
       onClearDraftDiagnostic={() => setDraftDiagnostic(undefined)}
       onTest={testDraft}
-      onConfirmSpanish={confirmSpanishValidation}
-      onExportReport={exportCompatibilityReport}
+      onRunCharacterProfileTrial={runCharacterProfileTrial}
+      onValidateCharacterProfileTestSet={validateCharacterProfileTestSet}
+      onSaveLocalProfile={saveLocalProfile}
+      onExportLocalProfile={exportLocalProfile}
+      onImportLocalProfile={importLocalProfile}
+      onPasteLocalProfile={pasteLocalProfile}
+      onDeleteLocalProfile={deleteLocalProfile}
       onSave={save}
     />
   );
@@ -258,7 +322,11 @@ export function App() {
   return (
     <I18nProvider>
       <BridgeProvider>
-        <AppContent />
+        <TooltipProvider>
+          <PrintDiagnosticsProvider>
+            <AppContent />
+          </PrintDiagnosticsProvider>
+        </TooltipProvider>
       </BridgeProvider>
     </I18nProvider>
   );

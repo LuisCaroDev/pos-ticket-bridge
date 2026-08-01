@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { connectionLabel } from "./printer-utils";
 import type { PrinterForm } from "./types";
 import { useI18n } from "@/contexts/I18nContext";
@@ -58,51 +59,59 @@ export const DiscoveryPanel = memo(function DiscoveryPanel({
         ))}
       </CardContent>
       {scanningKind && (
-        <CardContent className="border-t pt-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            {tr("wait_for_scan")}
-          </div>
-        </CardContent>
+        <>
+          <Separator />
+          <CardContent>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              {tr("wait_for_scan")}
+            </div>
+          </CardContent>
+        </>
       )}
       {discovery && !scanningKind && (
-        <CardContent className="border-t pt-4">
-          <div className="mb-3">
-            <p className="text-sm font-medium">{tr("latest_scan")}</p>
-            <p className="text-xs text-muted-foreground">
-              {discovery.notes
-                ?.map((note: BridgeMessage) => translateMessage(language, note))
-                .join(" ") ||
-                tr("devices_found", { count: discovery.items?.length || 0 })}
-            </p>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            {discovery.items?.length ? (
-              discovery.items.map((item: PrinterForm, index: number) => (
-                <div
-                  key={`${item.nombre}-${index}`}
-                  className="rounded-lg border p-3"
-                >
-                  <p className="font-medium">{item.nombre}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {connectionLabel(item)}
-                  </p>
-                  <Button
-                    className="mt-3"
-                    size="sm"
-                    onClick={() => onUseResult(item)}
-                  >
-                    {tr("use_result")}
-                  </Button>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {tr("no_devices")}
+        <>
+          <Separator />
+          <CardContent>
+            <div className="mb-3">
+              <p className="text-sm font-medium">{tr("latest_scan")}</p>
+              <p className="text-xs text-muted-foreground">
+                {discovery.notes
+                  ?.map((note: BridgeMessage) =>
+                    translateMessage(language, note),
+                  )
+                  .join(" ") ||
+                  tr("devices_found", { count: discovery.items?.length || 0 })}
               </p>
-            )}
-          </div>
-        </CardContent>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {discovery.items?.length ? (
+                discovery.items.map((item: PrinterForm, index: number) => (
+                  <div
+                    key={`${item.nombre}-${index}`}
+                    className="rounded-lg border p-3"
+                  >
+                    <p className="font-medium">{item.nombre}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {connectionLabel(item)}
+                    </p>
+                    <Button
+                      className="mt-3"
+                      size="sm"
+                      onClick={() => onUseResult(item)}
+                    >
+                      {tr("use_result")}
+                    </Button>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {tr("no_devices")}
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </>
       )}
     </Card>
   );

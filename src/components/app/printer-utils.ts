@@ -12,6 +12,7 @@ export const automaticProfile = () => ({
 export const formFor = (printer: any): PrinterForm => ({
   id: printer.id,
   nombre: printer.nombre,
+  reportedBrand: printer.reportedBrand,
   reportedModel: printer.reportedModel,
   tipo: printer.tipo,
   anchoMm: printer.anchoMm,

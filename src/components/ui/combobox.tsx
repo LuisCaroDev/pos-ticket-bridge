@@ -57,6 +57,24 @@ function ComboboxTrigger({
 }
 
 const ComboboxPortal = ComboboxPrimitive.Portal;
+const ComboboxCollection = ComboboxPrimitive.Collection;
+const ComboboxGroup = ComboboxPrimitive.Group;
+
+function ComboboxGroupLabel({
+  className,
+  ...props
+}: React.ComponentProps<typeof ComboboxPrimitive.GroupLabel>) {
+  return (
+    <ComboboxPrimitive.GroupLabel
+      data-slot="combobox-group-label"
+      className={cn(
+        "px-2 py-1.5 text-xs font-medium text-muted-foreground",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 function ComboboxPositioner({
   className,
@@ -96,7 +114,10 @@ function ComboboxEmpty({
   return (
     <ComboboxPrimitive.Empty
       data-slot="combobox-empty"
-      className={cn("px-3 py-4 text-sm text-muted-foreground", className)}
+      className={cn(
+        "empty:hidden px-3 py-4 text-sm text-muted-foreground",
+        className,
+      )}
       {...props}
     />
   );
@@ -142,7 +163,10 @@ function ComboboxItem({
 
 export {
   Combobox,
+  ComboboxCollection,
   ComboboxEmpty,
+  ComboboxGroup,
+  ComboboxGroupLabel,
   ComboboxInput,
   ComboboxInputGroup,
   ComboboxItem,

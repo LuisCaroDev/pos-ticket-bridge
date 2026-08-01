@@ -27,4 +27,3 @@ Use `src/i18n.ts` as the only catalog of user-visible text. Support both `es` an
 - Keep technical causes in diagnostics/logs; expose their stable code to the UI/API.
 - When adding a special-case text path, read [references/project-locations.md](references/project-locations.md) first.
 
-

@@ -15,11 +15,21 @@ export type FormErrorCode =
   | "validation_origin";
 
 const code = (message: FormErrorCode) => ({ message });
-const connectionSchema = z.record(z.string(), z.union([z.string(), z.number()]));
+const connectionSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number()]),
+);
 
 const printerFields = z.object({
   nombre: z.string().trim().min(1, code("validation_required")),
-  reportedModel: z.string().max(160, code("validation_model_length")).optional(),
+  reportedBrand: z
+    .string()
+    .max(160, code("validation_model_length"))
+    .optional(),
+  reportedModel: z
+    .string()
+    .max(160, code("validation_model_length"))
+    .optional(),
   tipo: z.enum(["network", "usb", "bluetooth"]),
   connection: connectionSchema,
   printProfile: z.object({
@@ -66,13 +76,15 @@ const addConnectionIssues = (
 };
 
 export const printerTransportSchema = (isWindows: boolean) =>
-  printerFields.pick({ tipo: true, connection: true }).superRefine((value, context) =>
-    addConnectionIssues(
-      { ...value, nombre: "valid", printProfile: { mode: "auto" } },
-      isWindows,
-      context,
-    ),
-  );
+  printerFields
+    .pick({ tipo: true, connection: true })
+    .superRefine((value, context) =>
+      addConnectionIssues(
+        { ...value, nombre: "valid", printProfile: { mode: "auto" } },
+        isWindows,
+        context,
+      ),
+    );
 
 export const printerFormSchema = (isWindows: boolean) =>
   printerFields.superRefine((value, context) => {
@@ -109,8 +121,9 @@ const originLines = (value: string) =>
     .map((line) => line.trim())
     .filter(Boolean);
 
-export const normalizeOrigins = (value: string) =>
-  [...new Set(originLines(value).map((line) => new URL(line).origin))];
+export const normalizeOrigins = (value: string) => [
+  ...new Set(originLines(value).map((line) => new URL(line).origin)),
+];
 
 export const settingsFormSchema = z
   .object({

@@ -17,7 +17,10 @@ import {
   discoverNetwork,
   discoverUsb,
 } from "./core/discovery";
-import { createCompatibilityReport } from "./core/compatibility-report";
+import {
+  createCompatibilityReport,
+  createLocalProfileExport,
+} from "./core/compatibility-report";
 import {
   PROFILE_CATALOG_VERSION,
   getCatalogProfile,
@@ -217,12 +220,21 @@ function registerIpc() {
     } as any;
     const selected = getCatalogProfile(input.printProfile?.profileId);
     const profiles = selectablePrinterProfiles();
+    const config = bridge.store.get();
+    const localProfiles = config.localProfiles.map((profile) => ({
+      ...profile,
+      local: true,
+      usageCount: config.printers.filter(
+        (item) => item.printProfile.localProfileId === profile.id,
+      ).length,
+    }));
     return {
       version: PROFILE_CATALOG_VERSION,
       suggestedProfileId: suggestedCatalogProfileId(printer),
       profiles: profiles.some((profile) => profile.id === selected.id)
         ? profiles
         : [...profiles, selected],
+      localProfiles,
     };
   });
   ipc("bridge:compatibility-report", (_event, input, diagnostic) =>
@@ -238,6 +250,21 @@ function registerIpc() {
       app.getVersion(),
       diagnostic,
     ),
+  );
+  ipc("bridge:export-local-profile", (_event, input) =>
+    createLocalProfileExport(input),
+  );
+  ipc("bridge:import-local-profile", (_event, input) =>
+    bridge.store.importLocalProfile(input),
+  );
+  ipc("bridge:save-local-profile", (_event, input) =>
+    bridge.store.saveLocalProfile(input),
+  );
+  ipc("bridge:delete-local-profile", (_event, id) =>
+    bridge.store.deleteLocalProfile(String(id)),
+  );
+  ipc("bridge:validate-character-profile-test-set", (_event, input) =>
+    bridge.validateCharacterProfileTestSet(input),
   );
   ipc(
     "bridge:request",
@@ -258,10 +285,16 @@ function registerIpc() {
   ipc("bridge:test-printer", (_event, input, options) =>
     bridge.testPrinter(input, options),
   );
+  ipc(
+    "bridge:run-character-profile-trial",
+    (_event, input, candidate, draftSessionId?: string) =>
+      bridge.runCharacterProfileTrial(input, candidate, draftSessionId),
+  );
   ipc("bridge:discard-draft-diagnostics", (_event, draftSessionId: string) =>
     bridge.discardDraftDiagnostics(draftSessionId),
   );
   ipc("bridge:copy", (_event, value: string) => clipboard.writeText(value));
+  ipc("bridge:paste", () => clipboard.readText());
 }
 const isPrimaryInstance = !started && app.requestSingleInstanceLock();
 

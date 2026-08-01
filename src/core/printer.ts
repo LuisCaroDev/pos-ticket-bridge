@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 import { BrowserWindow } from "electron";
-import { BridgeError, type TestPrintTexts } from "../i18n";
+import {
+  BridgeError,
+  type CharacterProfileTrialTexts,
+  type TestPrintTexts,
+} from "../i18n";
 import {
   resolvePrintProfile,
   shouldRasterizeText,
@@ -226,15 +230,20 @@ async function renderText(
   const alignValue =
     value.align === "center" || value.align === "right" ? value.align : "left";
   if (shouldRasterizeText(profile, content)) {
-    await rasterLines(printer, profile, [
-      {
-        text: content,
-        align: alignValue,
-        bold: Boolean(value.bold),
-        underline: Boolean(value.underline),
-        size: Number(value.size) || 1,
-      },
-    ], hooks);
+    await rasterLines(
+      printer,
+      profile,
+      [
+        {
+          text: content,
+          align: alignValue,
+          bold: Boolean(value.bold),
+          underline: Boolean(value.underline),
+          size: Number(value.size) || 1,
+        },
+      ],
+      hooks,
+    );
     return;
   }
   align(printer, value.align);
@@ -261,19 +270,24 @@ async function renderTableRow(
   if (shouldRasterizeText(profile, `${left}${right}`)) {
     const leftColumns = Math.floor(profile.columns * 0.65);
     const rightColumns = profile.columns - leftColumns;
-    await rasterLines(printer, profile, [
-      {
-        text: `${alignCell(
-          left,
-          leftColumns,
-          value.align === "center" || value.align === "right"
-            ? value.align
-            : "left",
-        )}${alignCell(right, rightColumns, "right")}`,
-        align: "left",
-        bold: Boolean(value.bold),
-      },
-    ], hooks);
+    await rasterLines(
+      printer,
+      profile,
+      [
+        {
+          text: `${alignCell(
+            left,
+            leftColumns,
+            value.align === "center" || value.align === "right"
+              ? value.align
+              : "left",
+          )}${alignCell(right, rightColumns, "right")}`,
+          align: "left",
+          bold: Boolean(value.bold),
+        },
+      ],
+      hooks,
+    );
     return;
   }
   printer.tableCustom([
@@ -377,9 +391,8 @@ async function withPrinter(
   definition: Printer,
   work: (printer: any, profile: ResolvedPrintProfile) => Promise<void>,
   hooks: Hooks = {},
-  profileOptions: Parameters<typeof resolvePrintProfile>[1] = {},
 ) {
-  const profile = resolvePrintProfile(definition, profileOptions);
+  const profile = resolvePrintProfile(definition);
   const transport = await adapter(definition, hooks);
   const printer = new escpos.Printer(transport, {
     encoding: profile.encoding,
@@ -411,13 +424,11 @@ export const printJob = (
   job: PrintJob,
   hooks: Hooks = {},
   imageOmitted?: string,
-  profileOptions: Parameters<typeof resolvePrintProfile>[1] = {},
 ) =>
   withPrinter(
     definition,
     (printer, profile) => render(printer, job, hooks, profile, imageOmitted),
     hooks,
-    profileOptions,
   );
 export const openDrawer = (definition: Printer, hooks: Hooks = {}) =>
   withPrinter(
@@ -450,7 +461,12 @@ export const testPrint = (
         { type: "text", content: texts.subtitle, align: "center" },
         { type: "separator", style: "solid" },
         { type: "text", content: texts.printer },
-        { type: "text", content: texts.characters },
+        {
+          type: "text",
+          content: [texts.ascii, texts.spanish, texts.symbols]
+            .filter(Boolean)
+            .join("\n"),
+        },
         { type: "text", content: new Date().toLocaleString() },
         { type: "feed", lines: 3 },
         { type: "cut" },
@@ -458,5 +474,36 @@ export const testPrint = (
     },
     hooks,
     texts.imageOmitted,
-    { allowUnverifiedSpanish: true },
+  );
+
+/** Prints native characters deliberately; this ticket verifies ESC/POS tables. */
+export const characterProfileTrialPrint = (
+  definition: Printer,
+  texts: CharacterProfileTrialTexts,
+  hooks: Hooks = {},
+) =>
+  printJob(
+    definition,
+    {
+      version: 1,
+      widthMm: definition.anchoMm,
+      reason: "character-profile-trial",
+      blocks: [
+        {
+          type: "text",
+          content: texts.title,
+          align: "center",
+          bold: true,
+        },
+        { type: "text", content: texts.profile, align: "center" },
+        { type: "separator", style: "solid" },
+        {
+          type: "text",
+          content: [texts.ascii, texts.spanish, texts.symbols].join("\n"),
+        },
+        { type: "feed", lines: 3 },
+        { type: "cut" },
+      ],
+    },
+    hooks,
   );
