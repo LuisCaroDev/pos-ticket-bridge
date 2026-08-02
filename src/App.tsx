@@ -18,6 +18,7 @@ import type {
   CharacterProfileCandidate,
   CharacterProfileTestSet,
 } from "@/core/character-profile-tests";
+import { translateMessage } from "@/i18n";
 import { BridgeProvider, useBridge } from "@/contexts/BridgeContext";
 import { I18nProvider, useI18n } from "@/contexts/I18nContext";
 import { PrintDiagnosticsProvider } from "@/contexts/PrintDiagnosticsContext";
@@ -30,7 +31,7 @@ function AppContent() {
   const [detectedCreation, setDetectedCreation] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isWindows = window.bridge.platform === "win32";
-  const { tr } = useI18n();
+  const { language, tr } = useI18n();
   const {
     busy,
     error,
@@ -121,7 +122,11 @@ function AppContent() {
       reportMessage(result.error);
       return;
     }
-    setNotice(tr("test_sent"));
+    setNotice(
+      result.diagnostic?.status === "warning"
+        ? translateMessage(language, result.diagnostic.message)
+        : tr("test_sent"),
+    );
   }, [draftSessionId, form, perform, reportMessage, setNotice, tr]);
   const runCharacterProfileTrial = useCallback(
     async (candidate: CharacterProfileCandidate) => {
@@ -136,10 +141,14 @@ function AppContent() {
         reportMessage(result.error);
         return false;
       }
-      setNotice(tr("character_profile_trial_sent"));
+      setNotice(
+        result.diagnostic?.status === "warning"
+          ? translateMessage(language, result.diagnostic.message)
+          : tr("character_profile_trial_sent"),
+      );
       return true;
     },
-    [draftSessionId, form, perform, reportMessage, setNotice, tr],
+    [draftSessionId, form, language, perform, reportMessage, setNotice, tr],
   );
   const validateCharacterProfileTestSet = useCallback(
     (testSet: CharacterProfileTestSet) =>
@@ -275,6 +284,7 @@ function AppContent() {
   const printerForm = (
     <PrinterEditorPanel
       form={form}
+      draftSessionId={draftSessionId}
       detected={detectedCreation}
       diagnostics={formDiagnostics}
       profileCatalog={profileCatalog}

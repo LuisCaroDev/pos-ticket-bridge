@@ -4,6 +4,7 @@ declare global {
     bridge: {
       platform: string;
       status(): Promise<any>;
+      diagnostics(): Promise<any[]>;
       settings(input: any): Promise<any>;
       createPrinter(input: any, draftSessionId?: string): Promise<any>;
       updatePrinter(id: string, input: any): Promise<any>;

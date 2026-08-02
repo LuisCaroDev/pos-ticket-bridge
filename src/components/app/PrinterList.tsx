@@ -18,7 +18,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { translateMessage } from "@/i18n";
-import { connectionLabel, diagnosticsForForm } from "./printer-utils";
+import { connectionLabel } from "./printer-utils";
 import { useBridge } from "@/contexts/BridgeContext";
 import { useI18n } from "@/contexts/I18nContext";
 import { usePrintDiagnostics } from "@/contexts/PrintDiagnosticsContext";
@@ -32,7 +32,7 @@ export const PrinterList = memo(function PrinterList({
   onCreate,
   onEdit,
 }: PrinterListProps) {
-  const { busy, deletePrinter, openDrawer, printers, status, testPrinter } =
+  const { busy, deletePrinter, openDrawer, printers, testPrinter } =
     useBridge();
   const { openDiagnostics } = usePrintDiagnostics();
   const { language, tr } = useI18n();
@@ -131,11 +131,7 @@ export const PrinterList = memo(function PrinterList({
                   onClick={() =>
                     openDiagnostics({
                       title: printer.nombre,
-                      diagnostics: diagnosticsForForm(
-                        status?.diagnostics || [],
-                        printer.id,
-                        undefined,
-                      ),
+                      filter: { printerId: printer.id },
                     })
                   }
                 >

@@ -11,12 +11,20 @@ import {
   type ResolvedPrintProfile,
 } from "./printer-profiles";
 import type { PrintJob, Printer } from "./types";
+import {
+  bluetoothSerialOptions,
+  resolveBluetoothSerialPath,
+} from "./transports/bluetooth-serial";
+import { createMacOSBluetoothAdapter } from "./transports/macos-bluetooth";
 import { createUsbAdapter } from "./transports/usb";
 const escpos: any = require("@node-escpos/core");
-const NetworkAdapter: any = require("@node-escpos/network-adapter");
 const SerialAdapter: any = require("@node-escpos/serialport-adapter");
+const NetworkAdapter: any = require("@node-escpos/network-adapter");
 type Hooks = {
   onEvent?: (stage: string, detail?: Record<string, unknown>) => void;
+};
+type WithPrinterOptions = {
+  probeBluetoothStatus?: boolean;
 };
 const emit = (
   hooks: Hooks,
@@ -34,13 +42,26 @@ async function adapter(printer: Printer, hooks: Hooks) {
     );
   }
   if (printer.tipo === "bluetooth") {
+    const configuredPath = String(printer.connection.path);
+    const path = resolveBluetoothSerialPath(configuredPath);
     emit(hooks, "adapter_prepare", {
       transport: "serial",
-      path: printer.connection.path,
+      path,
+      serialOptions: bluetoothSerialOptions(
+        Number(printer.connection.baudRate) || 9600,
+      ),
+      ...(path !== configuredPath ? { configuredPath } : {}),
     });
-    return new SerialAdapter(String(printer.connection.path), {
-      baudRate: Number(printer.connection.baudRate) || 9600,
-    });
+    if (process.platform !== "darwin")
+      return new SerialAdapter(path, {
+        baudRate: Number(printer.connection.baudRate) || 9600,
+      });
+    return createMacOSBluetoothAdapter(
+      path,
+      Number(printer.connection.baudRate) || 9600,
+      String(printer.connection.channel || ""),
+      hooks,
+    );
   }
   return createUsbAdapter(printer, hooks);
 }
@@ -387,10 +408,11 @@ export const configurePrinterForProfile = (
     printer.setCharacterCodeTable(profile.codeTable);
   printer.encode(profile.encoding);
 };
-async function withPrinter(
+async function withPrinterAttempt(
   definition: Printer,
   work: (printer: any, profile: ResolvedPrintProfile) => Promise<void>,
   hooks: Hooks = {},
+  options: WithPrinterOptions = {},
 ) {
   const profile = resolvePrintProfile(definition);
   const transport = await adapter(definition, hooks);
@@ -400,8 +422,29 @@ async function withPrinter(
   await new Promise<void>((resolve, reject) =>
     transport.open((error: Error) => (error ? reject(error) : resolve())),
   );
+  let workError: unknown;
   try {
     emit(hooks, "adapter_open_ok");
+    if (
+      options.probeBluetoothStatus &&
+      typeof transport.probeStatus === "function"
+    ) {
+      const responded = await transport.probeStatus();
+      if (
+        !responded &&
+        transport.reconnectAfterStatusTimeout === true &&
+        typeof transport.reopen === "function"
+      ) {
+        emit(hooks, "adapter_reconnect_after_status_timeout");
+        await new Promise<void>((resolve, reject) =>
+          transport.reopen((error: Error | null) =>
+            error ? reject(error) : resolve(),
+          ),
+        );
+        emit(hooks, "adapter_reopen_ok");
+        await transport.probeStatus();
+      }
+    }
     configurePrinterForProfile(printer, profile, hooks);
     emit(hooks, "print_profile", {
       id: profile.id,
@@ -415,20 +458,59 @@ async function withPrinter(
     });
     await work(printer, profile);
     await printer.flush();
-  } finally {
-    await printer.close().catch(() => undefined);
+  } catch (error) {
+    workError = error;
+  }
+  let closeError: unknown;
+  try {
+    await new Promise<void>((resolve, reject) =>
+      transport.close((error: Error | null) =>
+        error ? reject(error) : resolve(),
+      ),
+    );
+  } catch (error) {
+    closeError = error;
+    emit(hooks, "adapter_close_error", {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (workError) throw workError;
+  if (closeError) throw closeError;
+}
+
+const shouldRetryBluetoothNotReady = (definition: Printer, error: unknown) =>
+  process.platform === "darwin" &&
+  definition.tipo === "bluetooth" &&
+  error instanceof Error &&
+  error.message === "macOS Bluetooth SPP helper: not ready";
+
+async function withPrinter(
+  definition: Printer,
+  work: (printer: any, profile: ResolvedPrintProfile) => Promise<void>,
+  hooks: Hooks = {},
+  options: WithPrinterOptions = {},
+) {
+  try {
+    return await withPrinterAttempt(definition, work, hooks, options);
+  } catch (error) {
+    if (!shouldRetryBluetoothNotReady(definition, error)) throw error;
+    emit(hooks, "adapter_retry_after_not_ready");
+    return withPrinterAttempt(definition, work, hooks, options);
   }
 }
+
 export const printJob = (
   definition: Printer,
   job: PrintJob,
   hooks: Hooks = {},
   imageOmitted?: string,
+  options: WithPrinterOptions = {},
 ) =>
   withPrinter(
     definition,
     (printer, profile) => render(printer, job, hooks, profile, imageOmitted),
     hooks,
+    options,
   );
 export const openDrawer = (definition: Printer, hooks: Hooks = {}) =>
   withPrinter(
@@ -474,6 +556,7 @@ export const testPrint = (
     },
     hooks,
     texts.imageOmitted,
+    { probeBluetoothStatus: true },
   );
 
 /** Prints native characters deliberately; this ticket verifies ESC/POS tables. */
@@ -506,4 +589,6 @@ export const characterProfileTrialPrint = (
       ],
     },
     hooks,
+    undefined,
+    { probeBluetoothStatus: true },
   );

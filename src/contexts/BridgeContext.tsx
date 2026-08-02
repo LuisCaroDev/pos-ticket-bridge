@@ -95,9 +95,26 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }
   }, [errorMessage, setLanguage]);
 
+  const refreshDiagnostics = useCallback(async () => {
+    if (typeof window.bridge.diagnostics !== "function") return;
+    try {
+      const diagnostics = await window.bridge.diagnostics();
+      setStatus((current: any) =>
+        current ? { ...current, diagnostics } : current,
+      );
+    } catch {
+      // A background refresh must not replace the user's current feedback.
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => void refreshDiagnostics(), 1000);
+    return () => window.clearInterval(interval);
+  }, [refreshDiagnostics]);
 
   const perform = useCallback(
     async <T,>(name: string, action: () => Promise<T>) => {
@@ -139,10 +156,16 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const testPrinter = useCallback(
     (printerId: string) => {
       void perform(`test-${printerId}`, () =>
-        window.bridge.request(`/api/printers/${printerId}/test`),
+        window.bridge
+          .request(`/api/printers/${printerId}/test`)
+          .then((result: { message?: BridgeMessage }) => {
+            if (result?.message)
+              setNotice(translateMessage(languageRef.current, result.message));
+            return result;
+          }),
       );
     },
-    [perform],
+    [perform, setNotice],
   );
   const openDrawer = useCallback(
     (printerId: string) => {

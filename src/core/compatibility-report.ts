@@ -83,6 +83,7 @@ export const createCompatibilityReport = (
       ? {
           operation: diagnostic.operation,
           ok: diagnostic.ok,
+          status: diagnostic.status,
           durationMs: diagnostic.durationMs,
           steps: safeSteps(diagnostic),
         }

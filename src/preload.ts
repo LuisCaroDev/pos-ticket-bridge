@@ -13,6 +13,7 @@ const invoke = async (channel: string, ...args: unknown[]) => {
 contextBridge.exposeInMainWorld("bridge", {
   platform: process.platform,
   status: () => invoke("bridge:status"),
+  diagnostics: () => invoke("bridge:diagnostics"),
   settings: (input: unknown) => invoke("bridge:settings", input),
   createPrinter: (input: unknown, draftSessionId?: string) =>
     invoke("bridge:create-printer", input, draftSessionId),

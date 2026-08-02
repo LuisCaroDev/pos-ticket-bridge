@@ -11,11 +11,18 @@ import {
   resolvePrintProfile,
   shouldRasterizeText,
 } from "../src/core/printer-profiles";
+import { diagnosticStatusAfterStage } from "../src/core/types";
 import { createBridgeServer } from "../src/core/server";
 import {
   createCompatibilityReport,
   createLocalProfileExport,
 } from "../src/core/compatibility-report";
+import {
+  BluetoothSerialAdapter,
+  bluetoothOpenSettleMs,
+  bluetoothSerialOptions,
+  resolveBluetoothSerialPath,
+} from "../src/core/transports/bluetooth-serial";
 import {
   parseCharacterProfileTestSet,
   validateCharacterProfileCandidate,
@@ -51,6 +58,236 @@ afterEach(() => {
 });
 
 describe("POS Ticket Bridge", () => {
+  it("preserves the configured Bluetooth path on every platform", () => {
+    expect(resolveBluetoothSerialPath("/dev/tty.Printer001")).toBe(
+      "/dev/tty.Printer001",
+    );
+    expect(resolveBluetoothSerialPath("/dev/cu.Printer001")).toBe(
+      "/dev/cu.Printer001",
+    );
+    expect(resolveBluetoothSerialPath("COM4")).toBe("COM4");
+    expect(bluetoothOpenSettleMs("darwin")).toBe(400);
+    expect(bluetoothOpenSettleMs("win32")).toBe(0);
+    expect(bluetoothSerialOptions(9600, "darwin")).toEqual({
+      baudRate: 9600,
+      hupcl: false,
+    });
+    expect(bluetoothSerialOptions(9600, "win32")).toEqual({
+      baudRate: 9600,
+    });
+  });
+
+  it("drains Bluetooth output without flushing it away on close", async () => {
+    const calls: string[] = [];
+    const stages: string[] = [];
+    class FakeSerialPort {
+      private listeners = new Map<string, (...args: any[]) => void>();
+
+      on(event: string, listener: (...args: any[]) => void) {
+        this.listeners.set(event, listener);
+      }
+
+      open(callback: (error?: Error | null) => void) {
+        calls.push("open");
+        callback(null);
+      }
+
+      write(data: Buffer, callback?: (error?: Error | null) => void) {
+        calls.push(`write:${data.length}`);
+        callback?.(null);
+      }
+
+      drain(callback?: (error?: Error | null) => void) {
+        calls.push("drain");
+        callback?.(null);
+      }
+
+      set(
+        _options: { dtr: boolean; rts: boolean },
+        callback?: (error?: Error | null) => void,
+      ) {
+        calls.push("set");
+        callback?.(null);
+      }
+
+      flush() {
+        calls.push("flush");
+      }
+
+      close(callback?: (error?: Error | null) => void) {
+        calls.push("close");
+        callback?.(null);
+        this.listeners.get("close")?.();
+      }
+    }
+
+    const adapter = new BluetoothSerialAdapter(
+      "/dev/tty.Printer001",
+      { baudRate: 9600 },
+      { onEvent: (stage) => stages.push(stage) },
+      FakeSerialPort as any,
+      "linux",
+    );
+    await new Promise<void>((resolve, reject) =>
+      adapter.open((error) => (error ? reject(error) : resolve())),
+    );
+    await new Promise<void>((resolve, reject) =>
+      adapter.write(Buffer.from("ticket"), (error) =>
+        error ? reject(error) : resolve(),
+      ),
+    );
+    await new Promise<void>((resolve, reject) =>
+      adapter.close((error) => (error ? reject(error) : resolve())),
+    );
+
+    expect(calls).toEqual(["open", "write:6", "drain", "close"]);
+    expect(stages).toEqual([
+      "adapter_write_ok",
+      "adapter_drain_ok",
+      "adapter_close_ok",
+    ]);
+  });
+
+  it("creates a fresh serial session after closing Bluetooth", async () => {
+    const calls: string[] = [];
+    const devices: FakeSerialPort[] = [];
+    class FakeSerialPort {
+      private listeners = new Map<string, (...args: any[]) => void>();
+
+      constructor() {
+        devices.push(this);
+      }
+
+      on(event: string, listener: (...args: any[]) => void) {
+        this.listeners.set(event, listener);
+      }
+
+      open(callback: (error?: Error | null) => void) {
+        calls.push("open");
+        callback(null);
+      }
+
+      drain(callback?: (error?: Error | null) => void) {
+        calls.push("drain");
+        callback?.(null);
+      }
+
+      close(callback?: (error?: Error | null) => void) {
+        calls.push("close");
+        callback?.(null);
+        this.listeners.get("close")?.();
+      }
+    }
+
+    const adapter = new BluetoothSerialAdapter(
+      "/dev/tty.Printer001",
+      { baudRate: 9600 },
+      {},
+      FakeSerialPort as any,
+      "linux",
+    );
+    const open = () =>
+      new Promise<void>((resolve, reject) =>
+        adapter.open((error) => (error ? reject(error) : resolve())),
+      );
+    const close = () =>
+      new Promise<void>((resolve, reject) =>
+        adapter.close((error) => (error ? reject(error) : resolve())),
+      );
+
+    await open();
+    await close();
+    await open();
+
+    expect(devices).toHaveLength(2);
+    expect(calls).toEqual(["open", "drain", "close", "open"]);
+  });
+
+  it("can reuse a Bluetooth session between jobs and force a reconnect", async () => {
+    const calls: string[] = [];
+    const stages: string[] = [];
+    class FakeSerialPort {
+      private listeners = new Map<string, (...args: any[]) => void>();
+
+      on(event: string, listener: (...args: any[]) => void) {
+        this.listeners.set(event, listener);
+      }
+
+      removeListener(event: string) {
+        this.listeners.delete(event);
+      }
+
+      open(callback: (error?: Error | null) => void) {
+        calls.push("open");
+        callback(null);
+      }
+
+      write(data: Buffer, callback?: (error?: Error | null) => void) {
+        calls.push(`write:${data.length}`);
+        callback?.(null);
+      }
+
+      drain(callback?: (error?: Error | null) => void) {
+        calls.push("drain");
+        callback?.(null);
+      }
+
+      close(callback?: (error?: Error | null) => void) {
+        calls.push("close");
+        callback?.(null);
+        this.listeners.get("close")?.();
+      }
+    }
+
+    const adapter = new BluetoothSerialAdapter(
+      "/dev/tty.Printer001",
+      { baudRate: 9600 },
+      { onEvent: (stage) => stages.push(stage) },
+      FakeSerialPort as any,
+      "linux",
+      true,
+    );
+    const open = () =>
+      new Promise<void>((resolve, reject) =>
+        adapter.open((error) => (error ? reject(error) : resolve())),
+      );
+    const write = () =>
+      new Promise<void>((resolve, reject) =>
+        adapter.write(Buffer.from("ticket"), (error) =>
+          error ? reject(error) : resolve(),
+        ),
+      );
+    const close = () =>
+      new Promise<void>((resolve, reject) =>
+        adapter.close((error) => (error ? reject(error) : resolve())),
+      );
+
+    await open();
+    await write();
+    await close();
+    await open();
+    await write();
+    await close();
+    expect(calls).toEqual(["open", "write:6", "drain", "write:6", "drain"]);
+    expect(stages).toEqual(
+      expect.arrayContaining(["adapter_keep_open", "adapter_open_reused"]),
+    );
+
+    await new Promise<void>((resolve, reject) =>
+      adapter.reopen((error) => (error ? reject(error) : resolve())),
+    );
+    expect(calls).toEqual([
+      "open",
+      "write:6",
+      "drain",
+      "write:6",
+      "drain",
+      "drain",
+      "close",
+      "open",
+    ]);
+  });
+
   it("uses the paired Bluetooth device name for a serial port when available", () => {
     const pnpId =
       "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}_LOCALMFG&08E7\\7&113820F4&0&DC0D30F2D71D_C00000000";
@@ -124,6 +361,22 @@ describe("POS Ticket Bridge", () => {
   it("renders diagnostic translations with valid Spanish characters", () => {
     expect(t("es", "print_diagnostics")).toBe("Diagnóstico de impresión");
     expect(t("es", "diagnostic_cause")).toBe("Causa técnica");
+    expect(t("es", "print_sent_without_confirmation")).toContain("no confirmó");
+    expect(t("en", "print_sent_without_confirmation")).toContain(
+      "did not confirm",
+    );
+  });
+
+  it("classifies an unanswered printer status probe as a warning", () => {
+    expect(
+      diagnosticStatusAfterStage("success", "adapter_status_probe_timeout"),
+    ).toBe("warning");
+    expect(
+      diagnosticStatusAfterStage("warning", "adapter_status_probe_response"),
+    ).toBe("success");
+    expect(diagnosticStatusAfterStage("warning", "adapter_write_ok")).toBe(
+      "warning",
+    );
   });
 
   it("builds grouped test tickets for each printing language", () => {

@@ -95,7 +95,25 @@ export type Diagnostic = {
   finishedAt?: string;
   durationMs?: number;
   ok: boolean;
+  /** Distinguishes confirmed success from transport-only completion. */
+  status?: DiagnosticStatus;
   message?: BridgeMessage;
   cause?: string;
   steps: Array<Record<string, unknown>>;
+};
+
+export type DiagnosticStatus = "success" | "warning" | "error";
+
+/** Status probes are best-effort because some ESC/POS printers do not answer them. */
+export const diagnosticStatusAfterStage = (
+  current: DiagnosticStatus = "success",
+  stage: string,
+): DiagnosticStatus => {
+  if (stage === "adapter_status_probe_response") return "success";
+  if (
+    stage === "adapter_status_probe_timeout" ||
+    stage === "adapter_status_probe_error"
+  )
+    return "warning";
+  return current;
 };

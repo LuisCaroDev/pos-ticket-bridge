@@ -182,6 +182,7 @@ function registerIpc() {
     ...(await bridge.status()),
     version: app.getVersion(),
   }));
+  ipc("bridge:diagnostics", () => bridge.recentDiagnostics());
   ipc("bridge:settings", async (_event, input) => {
     const oldPort = bridge.store.get().port;
     const oldLanguage = bridge.store.get().language;

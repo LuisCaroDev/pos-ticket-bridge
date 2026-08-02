@@ -134,6 +134,7 @@ function AdvancedFieldLabel({
 }
 type PrinterEditorPanelProps = {
   form?: PrinterForm;
+  draftSessionId?: string;
   detected: boolean;
   diagnostics: any[];
   profileCatalog: any;
@@ -237,6 +238,7 @@ export const hasUnsavedCustomProfile = (
 
 export const PrinterEditorPanel = memo(function PrinterEditorPanel({
   form,
+  draftSessionId,
   detected,
   diagnostics,
   profileCatalog,
@@ -273,6 +275,17 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
   const [profileModel, setProfileModel] = useState("");
   const [profileIdentityError, setProfileIdentityError] = useState(false);
   const profileImportInputRef = useRef<HTMLInputElement>(null);
+  const openCurrentDiagnostics = () => {
+    if (!form) return;
+    openDiagnostics({
+      title: form.nombre,
+      ...(form.id
+        ? { filter: { printerId: form.id } }
+        : draftSessionId
+          ? { filter: { draftSessionId } }
+          : { diagnostics }),
+    });
+  };
   const {
     reset,
     handleSubmit,
@@ -1017,9 +1030,7 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                       onRunTrial={runCharacterProfileTrial}
                       onValidate={onValidateCharacterProfileTestSet}
                       onConfirm={confirmCharacterProfile}
-                      onViewDiagnostics={() =>
-                        openDiagnostics({ title: form.nombre, diagnostics })
-                      }
+                      onViewDiagnostics={openCurrentDiagnostics}
                       onCopyPrompt={(model) =>
                         copy(tr("character_profile_ai_prompt", { model }))
                       }
@@ -1342,9 +1353,7 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
             <Button
               type="button"
               variant="outline"
-              onClick={() =>
-                openDiagnostics({ title: form.nombre, diagnostics })
-              }
+              onClick={openCurrentDiagnostics}
             >
               <ScrollText data-icon="inline-start" />
               {tr("print_diagnostics")}

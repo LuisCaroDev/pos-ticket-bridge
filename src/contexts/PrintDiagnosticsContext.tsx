@@ -22,7 +22,8 @@ import { useBridge } from "./BridgeContext";
 import { useI18n } from "./I18nContext";
 
 type DiagnosticsTarget = {
-  diagnostics: any[];
+  diagnostics?: any[];
+  filter?: { printerId: string } | { draftSessionId: string };
   title?: string;
 };
 
@@ -42,13 +43,23 @@ const diagnosticDetails = (entry: Record<string, unknown>) =>
 
 export function PrintDiagnosticsProvider({ children }: PropsWithChildren) {
   const [target, setTarget] = useState<DiagnosticsTarget>();
-  const { copy } = useBridge();
+  const { copy, status } = useBridge();
   const { language, tr } = useI18n();
   const openDiagnostics = useCallback((next: DiagnosticsTarget) => {
     setTarget(next);
   }, []);
   const value = useMemo(() => ({ openDiagnostics }), [openDiagnostics]);
-  const diagnostics = target?.diagnostics || [];
+  const diagnostics = useMemo(() => {
+    if (!target?.filter) return target?.diagnostics || [];
+    const all = status?.diagnostics || [];
+    if ("printerId" in target.filter)
+      return all.filter(
+        (entry: any) => entry.printerId === target.filter?.printerId,
+      );
+    return all.filter(
+      (entry: any) => entry.draftSessionId === target.filter?.draftSessionId,
+    );
+  }, [status?.diagnostics, target]);
 
   return (
     <PrintDiagnosticsContext.Provider value={value}>
@@ -96,14 +107,18 @@ export function PrintDiagnosticsProvider({ children }: PropsWithChildren) {
                   <article>
                     <p
                       className={
-                        entry.ok
-                          ? "font-medium"
-                          : "font-medium text-destructive"
+                        entry.status === "warning"
+                          ? "font-medium text-amber-700 dark:text-amber-300"
+                          : entry.ok
+                            ? "font-medium"
+                            : "font-medium text-destructive"
                       }
                     >
-                      {entry.ok
-                        ? tr("operation_completed")
-                        : translateMessage(language, entry.message)}
+                      {entry.status === "warning"
+                        ? translateMessage(language, entry.message)
+                        : entry.ok
+                          ? tr("operation_completed")
+                          : translateMessage(language, entry.message)}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {entry.operation} ·{" "}

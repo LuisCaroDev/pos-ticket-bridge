@@ -32,7 +32,11 @@ import {
   validateCharacterProfileCandidate,
   validateCharacterProfileTestSet,
 } from "./character-profile-tests";
-import type { Diagnostic, Printer } from "./types";
+import {
+  diagnosticStatusAfterStage,
+  type Diagnostic,
+  type Printer,
+} from "./types";
 
 const printSchema = z.object({
   printerId: z.string().min(1),
@@ -107,6 +111,7 @@ export function createBridgeServer(
       })),
     ),
   });
+  const recentDiagnostics = () => diagnostics;
   const operation = async (
     printer: Printer,
     operationName: string,
@@ -121,19 +126,27 @@ export function createBridgeServer(
       operation: operationName,
       startedAt: new Date().toISOString(),
       ok: false,
+      status: "success",
       steps: [],
     };
     const started = Date.now();
     const hooks = {
-      onEvent: (stage: string, detail: Record<string, unknown> = {}) =>
-        entry.steps.push({ at: new Date().toISOString(), stage, ...detail }),
+      onEvent: (stage: string, detail: Record<string, unknown> = {}) => {
+        entry.status = diagnosticStatusAfterStage(entry.status, stage);
+        entry.steps.push({ at: new Date().toISOString(), stage, ...detail });
+      },
     };
     try {
       await work(hooks);
       entry.ok = true;
-      entry.message = message("operation_completed");
+      entry.message = message(
+        entry.status === "warning"
+          ? "print_sent_without_confirmation"
+          : "operation_completed",
+      );
       return entry;
     } catch (error) {
+      entry.status = "error";
       entry.message = errorPayload(error);
       entry.cause = error instanceof Error ? error.message : String(error);
       (error as Error & { diagnostic?: Diagnostic }).diagnostic = entry;
@@ -247,7 +260,7 @@ export function createBridgeServer(
   const test = async (id: string) => {
     const printer = store.find(id);
     try {
-      await operation(printer, "test-print", (hooks) =>
+      const diagnostic = await operation(printer, "test-print", (hooks) =>
         testPrint(
           printer,
           testPrintTexts(printer.printProfile.language, printer.nombre),
@@ -256,10 +269,21 @@ export function createBridgeServer(
       );
       lastTests.set(id, {
         ok: true,
+        status: diagnostic.status,
         at: new Date().toISOString(),
-        message: message("test_sent"),
+        message:
+          diagnostic.status === "warning"
+            ? diagnostic.message
+            : message("test_sent"),
       });
-      return { ok: true };
+      return {
+        ok: true,
+        status: diagnostic.status,
+        message:
+          diagnostic.status === "warning"
+            ? diagnostic.message
+            : message("test_sent"),
+      };
     } catch (error) {
       lastTests.set(id, {
         ok: false,
@@ -391,6 +415,7 @@ export function createBridgeServer(
     app,
     store,
     status,
+    recentDiagnostics,
     testPrinter,
     runCharacterProfileTrial,
     validateCharacterProfileTestSet: validateCharacterProfileTestSetInput,

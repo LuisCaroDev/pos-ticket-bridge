@@ -240,6 +240,7 @@ export type TranslationKey =
   | "diagnostic_cause"
   | "diagnostic_steps"
   | "test_sent"
+  | "print_sent_without_confirmation"
   | "tray_open"
   | "tray_copy_token"
   | "tray_show_hosts"
@@ -528,6 +529,8 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     diagnostic_steps: "Etapas registradas",
     test_sent:
       "Ticket de prueba enviado. Puedes guardar la impresora cuando estés conforme.",
+    print_sent_without_confirmation:
+      "Ticket enviado, pero la impresora no confirmó la recepción.",
     tray_open: "Abrir POS Ticket Bridge",
     tray_copy_token: "Copiar token",
     tray_show_hosts: "Mostrar hosts",
@@ -819,6 +822,8 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     diagnostic_steps: "Recorded stages",
     test_sent:
       "Test ticket sent. You can save the printer when you are satisfied.",
+    print_sent_without_confirmation:
+      "Ticket sent, but the printer did not confirm receipt.",
     tray_open: "Open POS Ticket Bridge",
     tray_copy_token: "Copy token",
     tray_show_hosts: "Show hosts",

@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
@@ -5,9 +8,49 @@ import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-nati
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
 const config: ForgeConfig = {
+  ...(process.platform === "darwin"
+    ? {
+        hooks: {
+          postPackage: async (_forgeConfig, packageResult) => {
+            for (const outputPath of packageResult.outputPaths) {
+              const appPath = [
+                outputPath,
+                path.join(outputPath, "POS Ticket Bridge.app"),
+              ].find((candidate) =>
+                existsSync(path.join(candidate, "Contents", "Info.plist")),
+              );
+              if (!appPath) continue;
+              const result = spawnSync(
+                "codesign",
+                [
+                  "--force",
+                  "--deep",
+                  "--sign",
+                  "-",
+                  "--identifier",
+                  "com.pos.ticketbridge",
+                  appPath,
+                ],
+                { stdio: "inherit" },
+              );
+              if (result.error) throw result.error;
+              if (result.status !== 0)
+                throw new Error(`Ad-hoc signing failed for ${appPath}`);
+            }
+          },
+        },
+      }
+    : {}),
   packagerConfig: {
     asar: true,
     asarUnpack: ["**/*.node"],
+    ...(process.platform === "darwin"
+      ? {
+          extraResource: [
+            "native/macos/.build/POS Ticket Bridge Bluetooth.app",
+          ],
+        }
+      : {}),
     // Vite solo incluye `.vite` por defecto. Las dependencias externalizadas del
     // proceso principal deben viajar junto con la app para resolverse en runtime.
     ignore: (file) => {
