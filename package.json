@@ -1,7 +1,7 @@
 {
   "name": "pos-ticket-bridge",
   "productName": "POS Ticket Bridge",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Puente local de impresión ESC/POS para puntos de venta.",
   "main": ".vite/build/main.js",
   "private": true,

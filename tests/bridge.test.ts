@@ -5,7 +5,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigStore } from "../src/core/config-store";
 import { discoverUsb, pairedBluetoothNameForPort } from "../src/core/discovery";
-import { configurePrinterForProfile, printJob } from "../src/core/printer";
+import {
+  configurePrinterForProfile,
+  imageMaxHeight,
+  imageMaxWidth,
+  printJob,
+  resizeImageContain,
+  resizeImageToMaxWidth,
+} from "../src/core/printer";
 import {
   defaultPrinterLanguage,
   resolvePrintProfile,
@@ -286,6 +293,52 @@ describe("POS Ticket Bridge", () => {
       "close",
       "open",
     ]);
+  });
+
+  it("contains a wide logo at the requested width while preserving its aspect ratio", () => {
+    const image = {
+      size: { width: 1280, height: 374, colors: 3 },
+      pixels: { data: new Uint8Array(1280 * 374 * 3) },
+    };
+
+    expect(resizeImageToMaxWidth(image, 224).size).toMatchObject({
+      width: 224,
+      height: 65,
+      colors: 3,
+    });
+  });
+
+  it("contains a tall logo within an equally high limit", () => {
+    const image = {
+      size: { width: 120, height: 900, colors: 3 },
+      pixels: { data: new Uint8Array(120 * 900 * 3) },
+    };
+
+    expect(resizeImageToMaxWidth(image, 224).size).toMatchObject({
+      width: 30,
+      height: 224,
+      colors: 3,
+    });
+  });
+
+  it("keeps a smaller logo at its natural size instead of enlarging it", () => {
+    const image = {
+      size: { width: 120, height: 80, colors: 3 },
+      pixels: { data: new Uint8Array(120 * 80 * 3) },
+    };
+
+    expect(resizeImageContain(image, { maxWidth: 576, maxHeight: 576 })).toBe(
+      image,
+    );
+  });
+
+  it("uses the paper raster width as the image limit when a job does not specify one", () => {
+    expect(imageMaxWidth({}, 576)).toBe(576);
+    expect(imageMaxWidth({}, 384)).toBe(384);
+    expect(imageMaxWidth({ maxWidth: 900 }, 384)).toBe(384);
+    expect(imageMaxWidth({ maxWidth: 224 }, 576)).toBe(224);
+    expect(imageMaxHeight({}, 576)).toBe(576);
+    expect(imageMaxHeight({ maxHeight: 224 }, 576)).toBe(224);
   });
 
   it("uses the paired Bluetooth device name for a serial port when available", () => {

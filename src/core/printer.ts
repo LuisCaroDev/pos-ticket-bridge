@@ -26,6 +26,10 @@ type Hooks = {
 type WithPrinterOptions = {
   probeBluetoothStatus?: boolean;
 };
+type PrintableImage = {
+  size: { width: number; height: number; colors: number };
+  pixels: { data: Uint8Array };
+};
 const emit = (
   hooks: Hooks,
   stage: string,
@@ -79,6 +83,78 @@ async function loadImage(source: string) {
     new Uint8Array(await response.arrayBuffer()),
     response.headers.get("content-type") || undefined,
   );
+}
+
+/** Fits an ESC/POS image into a box without cropping, distortion, or upscaling. */
+export function resizeImageContain(
+  image: PrintableImage,
+  bounds: { maxWidth: number; maxHeight: number },
+): PrintableImage {
+  const { width, height, colors } = image.size;
+  const maxWidth = Math.max(1, Math.floor(bounds.maxWidth));
+  const maxHeight = Math.max(1, Math.floor(bounds.maxHeight));
+  const scale = Math.min(1, maxWidth / width, maxHeight / height);
+  if (scale === 1) return image;
+
+  const targetWidth = Math.min(
+    maxWidth,
+    Math.max(1, Math.round(width * scale)),
+  );
+  const targetHeight = Math.min(
+    maxHeight,
+    Math.max(1, Math.round(height * scale)),
+  );
+  const output = new Uint8Array(targetWidth * targetHeight * colors);
+
+  for (let y = 0; y < targetHeight; y += 1) {
+    const sourceY = Math.min(
+      height - 1,
+      Math.floor((y * height) / targetHeight),
+    );
+    for (let x = 0; x < targetWidth; x += 1) {
+      const sourceX = Math.min(
+        width - 1,
+        Math.floor((x * width) / targetWidth),
+      );
+      const sourceIndex = (sourceY * width + sourceX) * colors;
+      const targetIndex = (y * targetWidth + x) * colors;
+      for (let channel = 0; channel < colors; channel += 1)
+        output[targetIndex + channel] =
+          image.pixels.data[sourceIndex + channel];
+    }
+  }
+
+  return new escpos.Image({
+    data: output,
+    shape: [targetWidth, targetHeight, colors],
+  }) as PrintableImage;
+}
+
+export function resizeImageToMaxWidth(
+  image: PrintableImage,
+  maxWidth: number,
+): PrintableImage {
+  return resizeImageContain(image, { maxWidth, maxHeight: maxWidth });
+}
+
+export function imageMaxWidth(
+  value: { maxWidth?: unknown },
+  printableWidth: number,
+) {
+  const requested = Number(value.maxWidth);
+  return Number.isFinite(requested) && requested > 0
+    ? Math.min(printableWidth, Math.floor(requested))
+    : printableWidth;
+}
+
+export function imageMaxHeight(
+  value: { maxHeight?: unknown },
+  maxWidth: number,
+) {
+  const requested = Number(value.maxHeight);
+  return Number.isFinite(requested) && requested > 0
+    ? Math.floor(requested)
+    : maxWidth;
 }
 
 const escapeXml = (value: string) =>
@@ -374,8 +450,13 @@ async function render(
       case "image":
         try {
           align(printer, "center");
+          const image = await loadImage(String(value.url || value.src || ""));
+          const maxWidth = imageMaxWidth(value, profile.rasterWidth);
           await printer.image(
-            await loadImage(String(value.url || value.src || "")),
+            resizeImageContain(image, {
+              maxWidth,
+              maxHeight: imageMaxHeight(value, maxWidth),
+            }),
           );
         } catch (error) {
           emit(hooks, "image_omitted", { error: (error as Error).message });
