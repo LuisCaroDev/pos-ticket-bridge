@@ -20,6 +20,7 @@ import {
 } from "../src/core/printer-profiles";
 import { diagnosticStatusAfterStage } from "../src/core/types";
 import { createBridgeServer } from "../src/core/server";
+import { PrintJobV1Schema } from "../src/core/print-job-contract";
 import {
   createCompatibilityReport,
   createLocalProfileExport,
@@ -65,6 +66,13 @@ afterEach(() => {
 });
 
 describe("POS Ticket Bridge", () => {
+  it("defaults auto start to enabled and persists the user preference", () => {
+    const { store } = fixture();
+    expect(store.get().autoStart).toBe(true);
+    store.settings({ autoStart: false });
+    expect(store.get().autoStart).toBe(false);
+  });
+
   it("preserves the configured Bluetooth path on every platform", () => {
     expect(resolveBluetoothSerialPath("/dev/tty.Printer001")).toBe(
       "/dev/tty.Printer001",
@@ -397,6 +405,7 @@ describe("POS Ticket Bridge", () => {
         language: "es",
         port: "9977",
         origins: "https://pos.example.com/\nhttps://pos.example.com",
+        autoStart: true,
       }).success,
     ).toBe(true);
     expect(
@@ -407,6 +416,7 @@ describe("POS Ticket Bridge", () => {
         language: "es",
         port: "0",
         origins: "https://pos.example.com/ventas",
+        autoStart: false,
       }).success,
     ).toBe(false);
   });
@@ -1405,7 +1415,7 @@ describe("POS Ticket Bridge", () => {
     expect(shouldRasterizeText(profile, "José")).toBe(true);
   });
 
-  it("encodes native Spanish text in the resolved ESC/POS encoding", async () => {
+  it("encodes Spanish natively and preserves full-width dividers after font selection", async () => {
     const received: Buffer[] = [];
     const server = net.createServer((socket) =>
       socket.on("data", (chunk) => received.push(Buffer.from(chunk))),
@@ -1435,7 +1445,17 @@ describe("POS Ticket Bridge", () => {
         },
         {
           version: 1,
-          blocks: [{ type: "text", content: "áéíóúüñÑ ¿¡ €" }, { type: "cut" }],
+          blocks: [
+            {
+              type: "text",
+              content: "áéíóúüñÑ ¿¡ €",
+              font: "compact-tall",
+              width: 1,
+              height: 1,
+            },
+            { type: "separator", style: "solid" },
+            { type: "cut" },
+          ],
         },
       );
     } finally {
@@ -1454,6 +1474,13 @@ describe("POS Ticket Bridge", () => {
     expect(
       output.includes(Buffer.from([0x1b, 0x40, 0x1c, 0x2e, 0x1b, 0x74, 19])),
     ).toBe(true);
+    expect(output.includes(Buffer.from([0x1b, 0x4d, 2, 0x1d, 0x21, 0]))).toBe(
+      true,
+    );
+    expect(output.includes(Buffer.from([0x1b, 0x4d, 0, 0x1d, 0x21, 0]))).toBe(
+      true,
+    );
+    expect(output.includes(Buffer.from("-".repeat(48)))).toBe(true);
     expect(output.includes(Buffer.from("áéíóúüñÑ ¿¡ €", "utf8"))).toBe(false);
   });
 
@@ -1689,5 +1716,52 @@ describe("POS Ticket Bridge", () => {
       params: { printerId: "missing" },
     });
     await bridge.stop();
+  });
+
+  it("valida fuentes y escalas nativas 1–8 en V1", () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, "print-job-v1-native-text.fixture.json"),
+        "utf8",
+      ),
+    );
+    expect(PrintJobV1Schema.parse(fixture)).toEqual(fixture);
+
+    for (const scale of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      expect(
+        PrintJobV1Schema.safeParse({
+          version: 1,
+          blocks: [
+            {
+              type: "text",
+              content: "Comanda",
+              font: "compact-tall",
+              width: scale,
+              height: scale,
+            },
+          ],
+        }).success,
+      ).toBe(true);
+    }
+    for (const scale of [0, 9]) {
+      expect(
+        PrintJobV1Schema.safeParse({
+          version: 1,
+          blocks: [{ type: "text", content: "Comanda", width: scale }],
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      PrintJobV1Schema.safeParse({
+        version: 1,
+        blocks: [{ type: "text", content: "Comanda", font: "condensed" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      PrintJobV1Schema.safeParse({
+        version: 1,
+        blocks: [{ type: "text", content: "Comanda", size: 2 }],
+      }).success,
+    ).toBe(false);
   });
 });

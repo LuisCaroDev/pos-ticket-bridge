@@ -1,4 +1,5 @@
 import type { BridgeMessage, LanguageSetting } from "../i18n";
+import type { PrintJobBlock, PrintJobV1 } from "./print-job-contract";
 
 export type PrinterType = "network" | "usb" | "bluetooth";
 export type PrinterLanguage = "es" | "en";
@@ -63,29 +64,12 @@ export type BridgeConfig = {
   token: string;
   allowedOrigins: string[];
   language: LanguageSetting;
+  autoStart: boolean;
   printers: Printer[];
   localProfiles: LocalPrintProfile[];
 };
-export type PrintBlock = {
-  type:
-    | "text"
-    | "table-row"
-    | "separator"
-    | "feed"
-    | "cut"
-    | "qr"
-    | "barcode"
-    | "open-drawer"
-    | "image";
-  [key: string]: unknown;
-};
-export type PrintJob = {
-  version: number;
-  widthMm?: 58 | 80;
-  reason?: string;
-  jobId?: string;
-  blocks: PrintBlock[];
-};
+export type PrintBlock = PrintJobBlock;
+export type PrintJob = PrintJobV1;
 export type Diagnostic = {
   printerId: string;
   /** Identifies diagnostics created while a new printer is still a draft. */

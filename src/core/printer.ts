@@ -71,6 +71,21 @@ async function adapter(printer: Printer, hooks: Hooks) {
 }
 const align = (printer: any, value: unknown) =>
   printer.align(value === "center" ? "ct" : value === "right" ? "rt" : "lt");
+type FontSelectablePrinter = {
+  font?: (family: "A" | "B" | "C") => unknown;
+};
+const selectNativeFont = (printer: FontSelectablePrinter, value: unknown) => {
+  const family =
+    value === "compact" ? "B" : value === "compact-tall" ? "C" : "A";
+  if (typeof printer.font !== "function") return;
+  try {
+    printer.font(family);
+  } catch {
+    // Some ESC/POS implementations expose no requested font. Keep the document
+    // printable with its standard native font instead of falling back to a bitmap.
+    printer.font("A");
+  }
+};
 async function loadImage(source: string) {
   if (source.startsWith("data:")) {
     const match = source.match(/^data:([^;,]+);base64,(.+)$/);
@@ -345,7 +360,8 @@ async function renderText(
   }
   align(printer, value.align);
   printer.style(Boolean(value.bold), false, value.underline ? 1 : 0);
-  printer.size(Number(value.size) || 1, Number(value.size) || 1);
+  selectNativeFont(printer, value.font);
+  printer.size(Number(value.width) || 1, Number(value.height) || 1);
   // `println()` writes its JavaScript string directly, which makes Node turn
   // it into UTF-8 bytes. `text()` is the escpos API that encodes the value
   // using `printer.encode(...)`, selected from the resolved profile above.
@@ -353,6 +369,7 @@ async function renderText(
   // for each accented character on the physical printer.
   printer.text(content);
   printer.style(false, false, 0);
+  selectNativeFont(printer, "standard");
   printer.size(1, 1);
 }
 
@@ -464,7 +481,7 @@ async function render(
         }
         break;
       default:
-        throw new BridgeError("unsupported_print_block", { type: block.type });
+        throw new BridgeError("unsupported_print_block", { type: value.type });
     }
   }
 }
@@ -499,6 +516,10 @@ async function withPrinterAttempt(
   const transport = await adapter(definition, hooks);
   const printer = new escpos.Printer(transport, {
     encoding: profile.encoding,
+    // `font("A")` otherwise restores node-escpos' 42-column default even
+    // when this 80 mm profile prints 48 columns. Keep text rows and dividers
+    // aligned with the raster width after any native font selection.
+    width: profile.columns,
   });
   await new Promise<void>((resolve, reject) =>
     transport.open((error: Error) => (error ? reject(error) : resolve())),
@@ -619,9 +640,18 @@ export const testPrint = (
           content: texts.title,
           align: "center",
           bold: true,
-          size: 2,
+          font: "standard",
+          width: 2,
+          height: 2,
         },
-        { type: "text", content: texts.subtitle, align: "center" },
+        {
+          type: "text",
+          content: texts.subtitle,
+          align: "center",
+          font: "compact",
+          width: 1,
+          height: 1,
+        },
         { type: "separator", style: "solid" },
         { type: "text", content: texts.printer },
         {

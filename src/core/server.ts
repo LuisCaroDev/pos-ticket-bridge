@@ -1,6 +1,5 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
-import { z } from "zod";
 import {
   errorPayload,
   characterProfileTrialTexts,
@@ -37,17 +36,7 @@ import {
   type Diagnostic,
   type Printer,
 } from "./types";
-
-const printSchema = z.object({
-  printerId: z.string().min(1),
-  job: z.object({
-    version: z.number(),
-    widthMm: z.union([z.literal(58), z.literal(80)]).optional(),
-    reason: z.string().optional(),
-    jobId: z.string().optional(),
-    blocks: z.array(z.object({ type: z.string() }).passthrough()),
-  }),
-});
+import { PrintRequestSchema } from "./print-job-contract";
 const isLocal = (origin: unknown, port: number) =>
   !origin ||
   origin === `http://localhost:${port}` ||
@@ -380,7 +369,7 @@ export function createBridgeServer(
     }
   });
   app.post("/print", async (request: any, reply) => {
-    const parsed = printSchema.safeParse(request.body);
+    const parsed = PrintRequestSchema.safeParse(request.body);
     if (!parsed.success)
       return sendError(reply, 400, { code: "invalid_request" });
     try {

@@ -76,16 +76,6 @@ const config: ForgeConfig = {
     onlyModules: [],
   },
   makers: [
-    {
-      name: "@electron-forge/maker-squirrel",
-      platforms: ["win32"],
-      config: {
-        // Squirrel/NuGet no admite espacios; productName sigue siendo visible para usuarios.
-        name: "POSTicketBridge",
-        authors: "LuisCaroDev",
-        description: "Puente local de impresión ESC/POS para puntos de venta.",
-      },
-    },
     { name: "@electron-forge/maker-zip", platforms: ["darwin"] },
     { name: "@electron-forge/maker-rpm", platforms: ["linux"] },
     { name: "@electron-forge/maker-deb", platforms: ["linux"] },

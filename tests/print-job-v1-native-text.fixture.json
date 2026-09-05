@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "widthMm": 80,
+  "reason": "kitchen-order",
+  "jobId": "native-text-fixture",
+  "blocks": [
+    {
+      "type": "text",
+      "content": "BARRA",
+      "align": "center",
+      "bold": true,
+      "font": "standard",
+      "width": 2,
+      "height": 2
+    },
+    {
+      "type": "text",
+      "content": "MESA: P08",
+      "font": "compact",
+      "width": 1,
+      "height": 1
+    },
+    { "type": "cut" }
+  ]
+}

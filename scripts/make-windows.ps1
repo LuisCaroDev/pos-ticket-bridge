@@ -14,7 +14,19 @@ $nodePath = Join-Path $node23.FullName "node.exe"
 $forgeCli = Join-Path $projectRoot "node_modules/@electron-forge/cli/dist/electron-forge.js"
 
 & (Join-Path $PSScriptRoot "prepare-electron-zip.ps1")
-& $nodePath $forgeCli make --platform=win32 --arch=x64
+& $nodePath $forgeCli package --platform=win32 --arch=x64
+
+if ($LASTEXITCODE -ne 0) {
+  exit $LASTEXITCODE
+}
+
+$packagedApp = Join-Path $projectRoot "out\POS Ticket Bridge-win32-x64"
+if (!(Test-Path $packagedApp)) {
+  throw "No se encontro la aplicacion empaquetada: $packagedApp"
+}
+
+$electronBuilderCli = Join-Path $projectRoot "node_modules\electron-builder\cli.js"
+& $nodePath $electronBuilderCli --win nsis --x64 --prepackaged $packagedApp
 
 if ($LASTEXITCODE -ne 0) {
   exit $LASTEXITCODE
