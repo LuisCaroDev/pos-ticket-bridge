@@ -48,13 +48,29 @@ const launchedInBackground =
   app.isPackaged && process.argv.includes(BACKGROUND_ARGUMENT);
 const activeLanguage = () =>
   resolveLanguage(bridge.store.get().language, app.getLocale());
-const icon = () =>
-  nativeImage.createFromDataURL(
-    "data:image/svg+xml;base64," +
-      Buffer.from(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect x="4" y="9" width="24" height="16" rx="3" fill="#18181b"/><rect x="9" y="3" width="14" height="8" fill="#18181b"/><rect x="9" y="20" width="14" height="8" rx="1" fill="white"/><circle cx="23" cy="14" r="2" fill="white"/></svg>',
-      ).toString("base64"),
-  );
+const nativeAssetRoot = app.isPackaged
+  ? process.resourcesPath
+  : path.join(app.getAppPath(), "native");
+const nativeAssetPath = (filename: string) =>
+  path.join(nativeAssetRoot, filename);
+const iconPath = nativeAssetPath("pos-ticket-bridge-icon.png");
+const trayIconPath = nativeAssetPath("pos-ticket-bridge-trayTemplate.png");
+const trayIconRetinaPath = nativeAssetPath(
+  "pos-ticket-bridge-trayTemplate@2x.png",
+);
+const appIcon = () => nativeImage.createFromPath(iconPath);
+const trayIcon = () => {
+  const image = nativeImage.createFromPath(trayIconPath);
+  const retinaImage = nativeImage.createFromPath(trayIconRetinaPath);
+  image.addRepresentation({
+    scaleFactor: 2,
+    width: 32,
+    height: 32,
+    buffer: retinaImage.toPNG(),
+  });
+  if (process.platform === "darwin") image.setTemplateImage(true);
+  return image;
+};
 
 function ensureWindow() {
   if (window && !window.isDestroyed()) return window;
@@ -65,7 +81,7 @@ function ensureWindow() {
     minHeight: 650,
     show: false,
     title: "POS Ticket Bridge",
-    icon: icon(),
+    icon: appIcon(),
     backgroundColor: "#fafafa",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -77,9 +93,13 @@ function ensureWindow() {
     if (!quitting) {
       event.preventDefault();
       window?.hide();
+      hideDockIcon();
     }
   });
-  window.once("ready-to-show", () => window?.show());
+  window.once("ready-to-show", () => {
+    showDockIcon();
+    window?.show();
+  });
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL)
     window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   else
@@ -88,11 +108,22 @@ function ensureWindow() {
     );
   return window;
 }
+function hideDockIcon() {
+  if (process.platform === "darwin" && app.dock?.isVisible()) {
+    app.dock.hide();
+  }
+}
+function showDockIcon() {
+  if (process.platform === "darwin" && !app.dock?.isVisible()) {
+    app.dock.show();
+  }
+}
 function showWindow() {
   const target = ensureWindow();
   if (target.isMinimized()) target.restore();
   target.show();
   target.focus();
+  showDockIcon();
 }
 async function restartBridge() {
   await bridge?.stop().catch(() => undefined);
@@ -122,7 +153,7 @@ async function synchronizeAutoStart(enabled: boolean) {
 }
 function buildTray() {
   if (!tray) {
-    tray = new Tray(icon());
+    tray = new Tray(trayIcon());
     tray.on("double-click", showWindow);
   }
   const config = bridge.store.get();
@@ -370,6 +401,9 @@ if (!isPrimaryInstance) {
     }
     if (!launchedInBackground) ensureWindow();
   });
+  if (process.platform === "darwin") {
+    app.on("window-all-closed", (event) => event.preventDefault());
+  }
   app.on("activate", showWindow);
   app.on("before-quit", (event) => {
     if (!quitting) {

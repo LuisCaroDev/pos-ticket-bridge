@@ -43,23 +43,34 @@ const config: ForgeConfig = {
     : {}),
   packagerConfig: {
     asar: true,
+    icon: path.resolve(
+      __dirname,
+      process.platform === "darwin"
+        ? "native/pos-ticket-bridge-icon.icns"
+        : process.platform === "win32"
+          ? "native/pos-ticket-bridge-icon.ico"
+          : "native/pos-ticket-bridge-icon.png",
+    ),
     asarUnpack: ["**/*.node"],
-    ...(process.platform === "darwin"
-      ? {
-          extraResource: [
-            "native/macos/.build/POS Ticket Bridge Bluetooth.app",
-          ],
-        }
-      : {}),
+    extraResource: [
+      "native/pos-ticket-bridge-icon.png",
+      "native/pos-ticket-bridge-trayTemplate.png",
+      "native/pos-ticket-bridge-trayTemplate@2x.png",
+      ...(process.platform === "darwin"
+        ? ["native/macos/.build/POS Ticket Bridge Bluetooth.app"]
+        : []),
+    ],
     // Vite solo incluye `.vite` por defecto. Las dependencias externalizadas del
-    // proceso principal deben viajar junto con la app para resolverse en runtime.
+    // proceso principal y los assets nativos del tray deben viajar junto con la
+    // app para resolverse en runtime.
     ignore: (file) => {
       if (!file) return false;
 
       return (
         !file.startsWith("/.vite") &&
         !file.startsWith("/node_modules") &&
-        file !== "/package.json"
+        file !== "/package.json" &&
+        !file.startsWith("/native/pos-ticket-bridge-")
       );
     },
     // En Windows reutilizamos el runtime ya instalado por npm. Esto evita que el

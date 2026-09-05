@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  POS Ticket Bridge color icon.
+  Uses the exact same geometry as pos-ticket-bridge-tray.svg.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1280" role="img" aria-labelledby="title desc">
+  <title id="title">POS Ticket Bridge</title>
+  <desc id="desc">A white receipt with blue ticket wings on a navy rounded-square background.</desc>
+
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f7f7f7"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b8cff"/>
+      <stop offset="1" stop-color="#1269d9"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3a3d"/>
+      <stop offset="1" stop-color="#29292c"/>
+    </linearGradient>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur"/>
+      <feOffset dy="7" result="offset"/>
+      <feColorMatrix in="offset" type="matrix" values="0 0 0 0 0.01 0 0 0 0 0.03 0 0 0 0 0.10 0 0 0 .45 0" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="40" y="40" width="1200" height="1200" rx="240" fill="#071b49"/>
+
+  <g filter="url(#soft-shadow)" stroke="#24262d" stroke-width="24" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Left wing -->
+    <path fill="url(#wing)" d="
+      M 407 365
+      C 387 351 361 352 338 371
+      L 157 528
+      C 128 553 126 596 149 623
+      L 332 803
+      C 354 825 386 824 402 801
+      C 412 787 414 769 414 749
+      L 414 696
+      C 399 683 387 670 379 651
+      C 371 633 367 615 367 595
+      C 367 567 378 543 395 526
+      C 408 513 414 500 414 480
+      L 414 388
+      C 414 378 412 371 407 365 Z"/>
+
+    <!-- Right wing -->
+    <path fill="url(#wing)" d="
+      M 860 432
+      C 881 421 907 426 927 444
+      L 1110 610
+      C 1132 630 1134 666 1114 687
+      L 927 860
+      C 907 879 877 879 863 858
+      C 855 846 853 830 853 811
+      L 853 758
+      C 868 745 881 731 889 713
+      C 898 693 902 674 902 653
+      C 902 627 892 605 875 589
+      C 861 576 853 563 853 543
+      L 853 458
+      C 853 447 855 439 860 432 Z"/>
+
+    <!-- Central receipt -->
+    <path fill="url(#paper)" d="
+      M 424 267
+      H 832
+      C 848 267 860 281 860 300
+      V 909
+      C 860 928 855 940 844 945
+      C 833 951 823 947 812 936
+      L 772 889
+      L 727 936
+      C 715 948 702 948 690 936
+      L 644 889
+      L 596 937
+      C 584 949 571 948 559 936
+      L 510 889
+      L 465 938
+      C 454 950 441 950 429 943
+      C 419 937 414 926 414 909
+      V 300
+      C 414 280 418 270 424 267 Z"/>
+
+    <!-- Ticket text -->
+    <g fill="#071b49" stroke="none">
+      <rect x="476" y="428" width="304" height="45" rx="22.5"/>
+      <rect x="476" y="537" width="304" height="45" rx="22.5"/>
+      <rect x="476" y="645" width="224" height="45" rx="22.5"/>
+    </g>
+
+    <!-- Wing holes -->
+    <circle cx="240" cy="582" r="30" fill="#071b49" stroke="none"/>
+    <circle cx="1015" cy="676" r="30" fill="#071b49" stroke="none"/>
+  </g>
+</svg>
