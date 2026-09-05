@@ -113,6 +113,7 @@ export type SettingsFormValues = {
   language: LanguageSetting;
   port: string;
   origins: string;
+  autoStart: boolean;
 };
 
 const originLines = (value: string) =>
@@ -137,6 +138,7 @@ export const settingsFormSchema = z
         code("validation_port"),
       ),
     origins: z.string(),
+    autoStart: z.boolean(),
   })
   .superRefine((value, context) => {
     for (const line of originLines(value.origins)) {
@@ -164,12 +166,14 @@ export const defaultSettingsValues = (
   language: LanguageSetting,
   port: string,
   origins: string,
-): SettingsFormValues => ({ language, port, origins });
+  autoStart: boolean,
+): SettingsFormValues => ({ language, port, origins, autoStart });
 
 export const settingsInput = (values: SettingsFormValues) => ({
   language: values.language,
   port: Number(values.port),
   allowedOrigins: normalizeOrigins(values.origins),
+  autoStart: values.autoStart,
 });
 
 export const printerInput = (value: PrinterForm) => value;

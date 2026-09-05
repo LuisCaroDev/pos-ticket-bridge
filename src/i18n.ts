@@ -117,6 +117,12 @@ export type TranslationKey =
   | "validation_character_table"
   | "validation_origin"
   | "settings_description"
+  | "settings_language_section"
+  | "settings_startup_section"
+  | "settings_connection_section"
+  | "auto_start"
+  | "auto_start_description"
+  | "auto_start_macos_move_to_applications"
   | "allowed_origins"
   | "save_settings"
   | "language"
@@ -372,6 +378,14 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     validation_origin: "Ingresa un origen HTTP o HTTPS sin ruta.",
     settings_description:
       "Configura el servicio local y los orígenes autorizados.",
+    settings_language_section: "Idioma",
+    settings_startup_section: "Inicio automático",
+    settings_connection_section: "Conexión del Bridge",
+    auto_start: "Iniciar Bridge automáticamente",
+    auto_start_description:
+      "El Bridge se ejecutará en segundo plano al iniciar sesión.",
+    auto_start_macos_move_to_applications:
+      "Mueve POS Ticket Bridge a Aplicaciones, ejecuta xattr -dr com.apple.quarantine \"/Applications/POS Ticket Bridge.app\" y ábrelo de nuevo para activar el inicio automático.",
     allowed_origins: "Orígenes autorizados",
     save_settings: "Guardar ajustes",
     language: "Idioma",
@@ -668,6 +682,14 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     validation_character_table: "The table must be between 0 and 255.",
     validation_origin: "Enter an HTTP or HTTPS origin without a path.",
     settings_description: "Configure the local service and allowed origins.",
+    settings_language_section: "Language",
+    settings_startup_section: "Automatic startup",
+    settings_connection_section: "Bridge connection",
+    auto_start: "Start Bridge automatically",
+    auto_start_description:
+      "The Bridge will run in the background when you sign in.",
+    auto_start_macos_move_to_applications:
+      "Move POS Ticket Bridge to Applications, run xattr -dr com.apple.quarantine \"/Applications/POS Ticket Bridge.app\", and open it again to enable automatic startup.",
     allowed_origins: "Allowed origins",
     save_settings: "Save settings",
     language: "Language",

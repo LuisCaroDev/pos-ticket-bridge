@@ -9,8 +9,12 @@ import {
   nativeImage,
 } from "electron";
 import path from "node:path";
-import started from "electron-squirrel-startup";
 import { errorPayload, resolveLanguage, t } from "./i18n";
+import {
+  AutoStartManager,
+  BACKGROUND_ARGUMENT,
+  type AutoStartStatus,
+} from "./core/auto-start";
 import { ConfigStore } from "./core/config-store";
 import {
   discoverBluetooth,
@@ -35,6 +39,13 @@ let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let bridge: ReturnType<typeof createBridgeServer>;
+let autoStartManager: AutoStartManager;
+let autoStartStatus: AutoStartStatus = {
+  enabled: false,
+  registered: false,
+};
+const launchedInBackground =
+  app.isPackaged && process.argv.includes(BACKGROUND_ARGUMENT);
 const activeLanguage = () =>
   resolveLanguage(bridge.store.get().language, app.getLocale());
 const icon = () =>
@@ -91,6 +102,23 @@ async function restartBridge() {
   );
   await bridge.start();
   buildTray();
+}
+function createAutoStartManager() {
+  return new AutoStartManager({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    appPath: app.getAppPath(),
+    homePath: app.getPath("home"),
+    setWindowsLoginItemSettings: (settings) =>
+      app.setLoginItemSettings(settings),
+    getWindowsLoginItemSettings: (settings) =>
+      app.getLoginItemSettings(settings),
+  });
+}
+async function synchronizeAutoStart(enabled: boolean) {
+  autoStartStatus = await autoStartManager.sync(enabled);
+  return autoStartStatus;
 }
 function buildTray() {
   if (!tray) {
@@ -181,12 +209,17 @@ function registerIpc() {
   ipc("bridge:status", async () => ({
     ...(await bridge.status()),
     version: app.getVersion(),
+    autoStart: bridge.store.get().autoStart,
+    autoStartStatus,
   }));
   ipc("bridge:diagnostics", () => bridge.recentDiagnostics());
   ipc("bridge:settings", async (_event, input) => {
     const oldPort = bridge.store.get().port;
     const oldLanguage = bridge.store.get().language;
+    const oldAutoStart = bridge.store.get().autoStart;
     const config = bridge.store.settings(input);
+    if (oldAutoStart !== config.autoStart)
+      await synchronizeAutoStart(config.autoStart);
     if (oldPort !== config.port) await restartBridge();
     else if (oldLanguage !== config.language) buildTray();
     return config;
@@ -297,7 +330,7 @@ function registerIpc() {
   ipc("bridge:copy", (_event, value: string) => clipboard.writeText(value));
   ipc("bridge:paste", () => clipboard.readText());
 }
-const isPrimaryInstance = !started && app.requestSingleInstanceLock();
+const isPrimaryInstance = app.requestSingleInstanceLock();
 
 if (!isPrimaryInstance) {
   app.quit();
@@ -306,9 +339,11 @@ if (!isPrimaryInstance) {
   app.whenReady().then(async () => {
     app.setName("POS Ticket Bridge");
     app.setAppUserModelId("com.pos.ticketbridge");
+    autoStartManager = createAutoStartManager();
     registerIpc();
     try {
       await restartBridge();
+      await synchronizeAutoStart(bridge.store.get().autoStart);
     } catch (error) {
       const message = (error as Error).message;
       const port = new ConfigStore(
@@ -333,7 +368,7 @@ if (!isPrimaryInstance) {
       app.quit();
       return;
     }
-    ensureWindow();
+    if (!launchedInBackground) ensureWindow();
   });
   app.on("activate", showWindow);
   app.on("before-quit", (event) => {

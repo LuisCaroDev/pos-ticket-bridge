@@ -63,6 +63,7 @@ export type BridgeConfig = {
   token: string;
   allowedOrigins: string[];
   language: LanguageSetting;
+  autoStart: boolean;
   printers: Printer[];
   localProfiles: LocalPrintProfile[];
 };

@@ -20,6 +20,7 @@ import {
 } from "../src/core/printer-profiles";
 import { diagnosticStatusAfterStage } from "../src/core/types";
 import { createBridgeServer } from "../src/core/server";
+import { PrintJobV1Schema } from "../src/core/print-job-contract";
 import {
   createCompatibilityReport,
   createLocalProfileExport,
@@ -65,6 +66,13 @@ afterEach(() => {
 });
 
 describe("POS Ticket Bridge", () => {
+  it("defaults auto start to enabled and persists the user preference", () => {
+    const { store } = fixture();
+    expect(store.get().autoStart).toBe(true);
+    store.settings({ autoStart: false });
+    expect(store.get().autoStart).toBe(false);
+  });
+
   it("preserves the configured Bluetooth path on every platform", () => {
     expect(resolveBluetoothSerialPath("/dev/tty.Printer001")).toBe(
       "/dev/tty.Printer001",
@@ -397,6 +405,7 @@ describe("POS Ticket Bridge", () => {
         language: "es",
         port: "9977",
         origins: "https://pos.example.com/\nhttps://pos.example.com",
+        autoStart: true,
       }).success,
     ).toBe(true);
     expect(
@@ -407,6 +416,7 @@ describe("POS Ticket Bridge", () => {
         language: "es",
         port: "0",
         origins: "https://pos.example.com/ventas",
+        autoStart: false,
       }).success,
     ).toBe(false);
   });
@@ -1689,5 +1699,24 @@ describe("POS Ticket Bridge", () => {
       params: { printerId: "missing" },
     });
     await bridge.stop();
+  });
+
+  it("valida tamaños nativos 1–8 en V1", () => {
+    for (const size of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      expect(
+        PrintJobV1Schema.safeParse({
+          version: 1,
+          blocks: [{ type: "text", content: "Comanda", size }],
+        }).success,
+      ).toBe(true);
+    }
+    for (const size of [0, 9]) {
+      expect(
+        PrintJobV1Schema.safeParse({
+          version: 1,
+          blocks: [{ type: "text", content: "Comanda", size }],
+        }).success,
+      ).toBe(false);
+    }
   });
 });

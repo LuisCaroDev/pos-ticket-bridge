@@ -39,6 +39,8 @@ function AppContent() {
     loadProfileCatalog,
     notice,
     origins,
+    autoStart,
+    autoStartWarning,
     perform,
     port,
     profileCatalog,
@@ -316,6 +318,9 @@ function AppContent() {
           languageSetting={languageSetting}
           port={port}
           origins={origins}
+          autoStart={autoStart}
+          showAutoStart={isWindows || window.bridge.platform === "darwin"}
+          autoStartWarning={autoStartWarning}
           onOpenChange={setSettingsOpen}
           onSave={async (input) => {
             const saved = await saveSettings(input);

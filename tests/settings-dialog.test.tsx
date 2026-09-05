@@ -13,12 +13,22 @@ describe("SettingsDialog", () => {
           languageSetting="es"
           port="9977"
           origins=""
+          autoStart
+          showAutoStart
           onOpenChange={vi.fn()}
           onSave={vi.fn().mockResolvedValue(true)}
         />
       </I18nProvider>,
     );
 
+    expect(screen.getAllByText("Idioma")).toHaveLength(2);
+    expect(screen.getByText("Inicio automático")).toBeTruthy();
+    expect(screen.getByText("Conexión del Bridge")).toBeTruthy();
+    expect(
+      screen.getByRole("switch", {
+        name: "Iniciar Bridge automáticamente",
+      }),
+    ).toBeTruthy();
     const save = screen.getByRole("button", { name: "Guardar ajustes" });
     expect((save as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByDisplayValue("9977"), {

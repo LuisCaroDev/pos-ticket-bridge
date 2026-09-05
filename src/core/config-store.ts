@@ -141,6 +141,7 @@ const persistedConfigSchema = z
     token: z.string().min(1),
     allowedOrigins: z.array(z.string()),
     language: z.enum(["system", "es", "en"]),
+    autoStart: z.boolean().optional(),
     printers: z.array(z.unknown()),
     localProfiles: z.array(z.unknown()).optional(),
   })
@@ -152,6 +153,7 @@ const configSchema = z
     token: z.string().min(1),
     allowedOrigins: z.array(z.string()),
     language: z.enum(["system", "es", "en"]),
+    autoStart: z.boolean(),
     printers: z.array(printerSchema),
     localProfiles: z.array(localPrintProfileSchema),
   })
@@ -244,6 +246,7 @@ export const defaultConfig = (): BridgeConfig => ({
   token: token(),
   allowedOrigins: [],
   language: "system",
+  autoStart: true,
   printers: [],
   localProfiles: [],
 });
@@ -307,6 +310,7 @@ export class ConfigStore {
       );
       const next = configSchema.parse({
         ...persisted,
+        autoStart: persisted.autoStart ?? true,
         printers: synchronizedPrinters,
         localProfiles,
       }) as BridgeConfig;
@@ -314,6 +318,7 @@ export class ConfigStore {
       if (
         printers.length !== persisted.printers.length ||
         !persisted.localProfiles ||
+        persisted.autoStart === undefined ||
         JSON.stringify(synchronizedPrinters) !== JSON.stringify(printers)
       )
         this.write(next);
@@ -353,7 +358,9 @@ export class ConfigStore {
     };
   }
   settings(
-    input: Partial<Pick<BridgeConfig, "port" | "allowedOrigins" | "language">>,
+    input: Partial<
+      Pick<BridgeConfig, "port" | "allowedOrigins" | "language" | "autoStart">
+    >,
   ) {
     return this.save({
       ...this.config,
@@ -362,6 +369,7 @@ export class ConfigStore {
         input.allowedOrigins?.map((x) => x.trim()).filter(Boolean) ||
         this.config.allowedOrigins,
       language: input.language || this.config.language,
+      autoStart: input.autoStart ?? this.config.autoStart,
     });
   }
   private uniqueLocalProfileId(base: string) {

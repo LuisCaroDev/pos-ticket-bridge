@@ -21,6 +21,7 @@ type SettingsInput = {
   language: LanguageSetting;
   port: number;
   allowedOrigins: string[];
+  autoStart: boolean;
 };
 
 type BridgeContextValue = {
@@ -33,6 +34,8 @@ type BridgeContextValue = {
   languageSetting: LanguageSetting;
   port: string;
   origins: string;
+  autoStart: boolean;
+  autoStartWarning?: "macos_move_to_applications";
   printers: any[];
   refresh: () => Promise<void>;
   perform: <T>(
@@ -65,6 +68,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [port, setPort] = useState("9977");
   const [languageSetting, setLanguageSetting] =
     useState<LanguageSetting>("system");
+  const [autoStart, setAutoStart] = useState(true);
+  const [autoStartWarning, setAutoStartWarning] =
+    useState<"macos_move_to_applications">();
   const languageRef = useRef(language);
 
   useEffect(() => {
@@ -89,6 +95,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setPort(String(next.port));
       setOrigins((next.allowedOrigins || []).join("\n"));
       setLanguageSetting(next.language || "system");
+      setAutoStart(next.autoStart !== false);
+      setAutoStartWarning(
+        next.autoStartStatus?.reason === "macos_move_to_applications"
+          ? "macos_move_to_applications"
+          : undefined,
+      );
       setLanguage(next.activeLanguage || "es");
     } catch (cause) {
       setError(errorMessage(cause));
@@ -148,6 +160,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
             port: input.port,
             allowedOrigins: input.allowedOrigins,
             language: input.language,
+            autoStart: input.autoStart,
           }),
         ),
       ),
@@ -212,6 +225,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       languageSetting,
       port,
       origins,
+      autoStart,
+      autoStartWarning,
       printers: status?.printers || [],
       refresh,
       perform,
@@ -228,6 +243,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }),
     [
       appVersion,
+      autoStart,
+      autoStartWarning,
       busy,
       clearFeedback,
       copy,
