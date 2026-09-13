@@ -1,5 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import type { ServerOptions } from "node:https";
+import type { LocalHttpsStatus } from "./local-https-types";
 import {
   errorPayload,
   characterProfileTrialTexts,
@@ -40,14 +42,29 @@ import { PrintRequestSchema } from "./print-job-contract";
 const isLocal = (origin: unknown, port: number) =>
   !origin ||
   origin === `http://localhost:${port}` ||
-  origin === `http://127.0.0.1:${port}`;
+  origin === `http://127.0.0.1:${port}` ||
+  origin === `https://localhost:${port}` ||
+  origin === `https://127.0.0.1:${port}`;
 
 export function createBridgeServer(
   store: ConfigStore,
   getActiveLanguage: () => SupportedLanguage = () =>
     resolveLanguage(store.get().language),
+  options: {
+    tls?: ServerOptions;
+    host?: string;
+    port?: number;
+    httpsStatus?: () => LocalHttpsStatus;
+  } = {},
 ) {
-  const app = Fastify({ logger: false });
+  const app = Fastify({
+    logger: false,
+    ...(options.tls ? { https: options.tls } : {}),
+  });
+  const hosts = () =>
+    options.httpsStatus
+      ? [options.httpsStatus().host].filter(Boolean)
+      : suggestedHosts(store.get().port);
   const diagnostics: Diagnostic[] = [];
   const lastTests = new Map<string, unknown>();
   const allowed = (origin: string | undefined) =>
@@ -61,10 +78,20 @@ export function createBridgeServer(
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["content-type", "x-agent-token"],
   });
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (
+      request.method === "OPTIONS" &&
+      allowed(request.headers.origin) &&
+      request.headers["access-control-request-private-network"] === "true"
+    )
+      reply.header("Access-Control-Allow-Private-Network", "true");
+    return payload;
+  });
   app.addHook("onRequest", async (request, reply) => {
     if (request.method === "OPTIONS" || request.url === "/health") return;
     if (
       request.url.startsWith("/api/") &&
+      ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip) &&
       isLocal(request.headers.origin, store.get().port)
     )
       return;
@@ -84,7 +111,8 @@ export function createBridgeServer(
     allowedOrigins: store.get().allowedOrigins,
     configPath: store.path(),
     token: store.get().token,
-    suggestedHosts: suggestedHosts(store.get().port),
+    suggestedHosts: hosts(),
+    ...(options.httpsStatus ? { localHttps: options.httpsStatus() } : {}),
     configured: store.configured(),
     diagnostics,
     printers: await Promise.all(
@@ -286,7 +314,8 @@ export function createBridgeServer(
   app.get("/health", async () => ({
     ok: true,
     version: "1.0.0",
-    suggestedHosts: suggestedHosts(store.get().port),
+    suggestedHosts: hosts(),
+    transport: options.tls ? "https" : "http",
     printers: store
       .get()
       .printers.map(({ id, nombre, tipo }) => ({ id, nombre, tipo })),
@@ -294,7 +323,7 @@ export function createBridgeServer(
   app.get("/api/status", status);
   app.get("/api/config", async () => ({
     ok: true,
-    config: store.publicConfig(),
+    config: { ...store.publicConfig(), suggestedHosts: hosts() },
   }));
   app.get("/api/diagnostics/recent", async () => ({
     ok: true,
@@ -410,7 +439,11 @@ export function createBridgeServer(
     validateCharacterProfileTestSet: validateCharacterProfileTestSetInput,
     discardDraftDiagnostics,
     promoteDraftDiagnostics,
-    start: async () => app.listen({ port: store.get().port, host: "0.0.0.0" }),
+    start: async () =>
+      app.listen({
+        port: options.port ?? store.get().port,
+        host: options.host || "0.0.0.0",
+      }),
     stop: () => app.close(),
   };
 }

@@ -1,8 +1,26 @@
+import type {
+  LocalHttpsStatus,
+  NetworkSelection,
+  ClientOS,
+  EnrollmentStatus,
+} from "./core/local-https-types";
 export {};
 declare global {
   interface Window {
     bridge: {
       platform: string;
+      httpsStatus(): Promise<LocalHttpsStatus>;
+      httpsTrust(): Promise<LocalHttpsStatus>;
+      httpsActivate(selection?: NetworkSelection): Promise<LocalHttpsStatus>;
+      httpsPause(): Promise<LocalHttpsStatus>;
+      httpsSelect(selection: NetworkSelection): Promise<LocalHttpsStatus>;
+      httpsEnroll(os: ClientOS): Promise<EnrollmentStatus>;
+      httpsStopEnrollment(): Promise<void>;
+      httpsReset(): Promise<LocalHttpsStatus>;
+      httpsVideos(): Promise<Partial<Record<ClientOS, boolean>>>;
+      httpsVideo(os: ClientOS): Promise<void>;
+      httpsHealth(): Promise<void>;
+      httpsHelp(os: ClientOS): Promise<void>;
       status(): Promise<any>;
       diagnostics(): Promise<any[]>;
       settings(input: any): Promise<any>;

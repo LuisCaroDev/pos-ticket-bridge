@@ -362,6 +362,8 @@ export class ConfigStore {
       Pick<BridgeConfig, "port" | "allowedOrigins" | "language" | "autoStart">
     >,
   ) {
+    if (Number(input.port) === 9978)
+      throw new BridgeError("https_reserved_port");
     return this.save({
       ...this.config,
       port: Number(input.port) || this.config.port,

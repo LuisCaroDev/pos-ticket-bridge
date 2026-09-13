@@ -41,6 +41,86 @@ export const resolveLanguage = (
 };
 
 export type TranslationKey =
+  | "https_trust_ready"
+  | "https_trust_failed"
+  | "https_trust_remove_failed"
+  | "https_trust_retry"
+  | "https_step_os"
+  | "https_step_qr"
+  | "https_step_os_hint"
+  | "https_step_continue"
+  | "https_step_back"
+  | "https_qr_preparing"
+  | "https_qr_regenerate"
+  | "https_technical_details"
+  | "https_scan_install"
+  | "settings_https_draft_hint"
+  | "settings_save_failed"
+  | "settings_active_connection"
+  | "settings_application_section"
+  | "settings_advanced_section"
+  | "settings_actions_hint"
+  | "connection_actions"
+  | "webpos_connection"
+  | "https_actions"
+  | "https_access_description"
+  | "https_setup_other"
+  | "https_scan_from_device"
+  | "https_open_link_alternative"
+  | "https_copy_download"
+  | "https_test_connection"
+  | "https_video_help"
+  | "https_help_intro"
+  | "https_help_or"
+  | "https_guide_help"
+  | "https_guide_help_only"
+  | "https_video_unavailable"
+  | "https_validate_instruction"
+  | "https_copy_health"
+  | "https_same_network"
+  | "https_title"
+  | "https_enable"
+  | "https_settings_hint"
+  | "https_interface"
+  | "https_select_interface"
+  | "https_interface_missing"
+  | "https_store_invalid"
+  | "https_storage_unavailable"
+  | "https_decryption_failed"
+  | "https_ca_expired"
+  | "https_operation_failed"
+  | "https_reserved_port"
+  | "https_invalid_os"
+  | "https_setup_unavailable"
+  | "https_must_be_active"
+  | "https_reset"
+  | "https_reset_confirm"
+  | "https_unconfigured"
+  | "https_active"
+  | "https_paused"
+  | "https_stopped"
+  | "https_state"
+  | "https_transport"
+  | "https_expiry"
+  | "https_ca_expiry"
+  | "https_fingerprint"
+  | "https_retry"
+  | "https_setup"
+  | "https_setup_description"
+  | "https_os"
+  | "https_download_start"
+  | "https_download_stop"
+  | "https_download_time"
+  | "https_download_expired"
+  | "https_qr_alt"
+  | "https_help"
+  | "https_guide_ios"
+  | "https_guide_android"
+  | "https_guide_windows"
+  | "https_guide_macos"
+  | "https_health"
+  | "https_lan_hint"
+  | "https_ip_notice"
   | "active"
   | "app_description"
   | "refresh"
@@ -296,12 +376,121 @@ type Dictionary = Record<TranslationKey, string>;
 
 const translations: Record<SupportedLanguage, Dictionary> = {
   es: {
+    https_trust_ready:
+      "Este equipo confía en la CA del bridge. Si el navegador seguía abierto, reinícialo.",
+    https_trust_failed:
+      "No se pudo confirmar la confianza en este equipo. Reintenta la instalación y acepta el aviso del sistema si aparece.",
+    https_trust_remove_failed:
+      "No se pudo quitar la CA del sistema. Se conservaron los certificados para reintentar el restablecimiento.",
+    https_trust_retry: "Confiar en este equipo",
+    https_step_os: "Paso 1 de 2 · Elige el sistema operativo",
+    https_step_qr: "Paso 2 de 2 · Configura {os}",
+    https_step_os_hint:
+      "Al continuar, aparecerá un QR disponible durante {time} (min:seg).",
+    https_step_continue: "Continuar",
+    https_step_back: "Cambiar sistema operativo",
+    https_qr_preparing: "Preparando QR…",
+    https_qr_regenerate: "Reactivar descarga",
+    https_technical_details: "Detalles técnicos",
+    https_scan_install: "Escanear e instalar",
+    settings_https_draft_hint:
+      "Se aplica al guardar. Desactivar HTTPS conserva la CA y la confianza instalada.",
+    settings_save_failed:
+      "No se pudieron guardar los cambios. Revisa la conexión e inténtalo otra vez; tus cambios siguen en el formulario.",
+    settings_active_connection: "Conexión actual: {transport} · {host}",
+    settings_application_section: "Aplicación",
+    settings_advanced_section: "Avanzado",
+    settings_actions_hint:
+      "Estas acciones se ejecutan por separado. Guarda o cancela tus cambios antes de utilizarlas.",
+    connection_actions: "Acciones de conexión",
+    webpos_connection: "Conexión desde aplicaciones web",
+    https_actions: "Acciones de HTTPS local",
+    https_access_description:
+      "Gestiona la confianza HTTPS en este equipo y en los dispositivos que van a imprimir.",
+    https_setup_other: "Configurar otro dispositivo",
+    https_scan_from_device:
+      "Desde el dispositivo que va a imprimir, conectado a la misma red, escanea este QR",
+    https_open_link_alternative: "o abre este enlace:",
+    https_copy_download: "Copiar enlace de instalación",
+    https_test_connection: "Probar conexión HTTPS",
+    https_video_help: "Mira el video",
+    https_help_intro: "¿Tienes problemas?",
+    https_help_or: "o la",
+    https_guide_help: "guía oficial",
+    https_guide_help_only: "Consulta la guía oficial",
+    https_video_unavailable:
+      "El video de ayuda no está configurado para este sistema.",
+    https_validate_instruction:
+      "Abre {url} desde el dispositivo que va a imprimir para comprobar la conexión.",
+    https_copy_health: "Copiar dirección de prueba HTTPS",
+    https_same_network: "Conecta ambos dispositivos a la misma red.",
+    https_title: "HTTPS local",
+    https_enable: "Activar HTTPS local",
+    https_settings_hint:
+      "Al activar HTTPS se instala la CA en este equipo para el usuario actual. Acepta el aviso del sistema si aparece. Al desactivarlo se conservan los certificados y la confianza.",
+    https_interface: "Interfaz de red e IPv4",
+    https_select_interface:
+      "Selecciona una interfaz de red privada para HTTPS.",
+    https_interface_missing:
+      "La IPv4 seleccionada ya no está disponible. Selecciona una interfaz para recuperar HTTPS.",
+    https_store_invalid:
+      "No se puede leer o validar la configuración HTTPS. Los archivos se han conservado. Reintenta o restablece HTTPS.",
+    https_storage_unavailable:
+      "El cifrado seguro de Windows no está disponible. No se guardaron claves sin cifrar.",
+    https_decryption_failed:
+      "No se pueden descifrar las claves HTTPS con este usuario de Windows. Los archivos se han conservado.",
+    https_ca_expired:
+      "La CA venció o todavía no es válida. Revisa la fecha del equipo; si venció, restablece HTTPS e instala la nueva CA.",
+    https_operation_failed:
+      "No se pudo actualizar HTTPS. Revisa la interfaz seleccionada y que el puerto esté disponible.",
+    https_reserved_port:
+      "El puerto 9978 está reservado para configurar dispositivos.",
+    https_invalid_os: "Selecciona un sistema operativo compatible.",
+    https_setup_unavailable:
+      "No se pudo iniciar la descarga en el puerto {port}. Revisa que esté disponible y que la interfaz esté conectada.",
+    https_must_be_active: "Activa HTTPS antes de configurar un dispositivo.",
+    https_reset: "Restablecer HTTPS local",
+    https_reset_confirm:
+      "Se quitará la confianza de esta CA en el usuario actual y se eliminarán la CA y las claves y certificados HTTPS. El bridge volverá a HTTP y conservará el token y las impresoras. Para volver a usar HTTPS deberás instalar la nueva CA en los dispositivos. ¿Continuar?",
+    https_unconfigured: "Sin configurar",
+    https_active: "Activo",
+    https_paused: "Pausado",
+    https_stopped: "Sin listener",
+    https_state: "Estado HTTPS: {state}",
+    https_transport: "Transporte: {transport}",
+    https_expiry: "Certificado válido hasta: {date}",
+    https_ca_expiry: "CA válida hasta: {date}",
+    https_fingerprint: "Huella SHA-256 de la CA",
+    https_retry: "Reintentar conexión",
+    https_setup: "Configurar dispositivo",
+    https_setup_description:
+      "Instala la CA para que este dispositivo confíe en el HTTPS del bridge. Elige su sistema operativo y abre la descarga desde la misma red.",
+    https_os: "Sistema operativo del dispositivo",
+    https_download_start: "Iniciar descarga temporal",
+    https_download_stop: "Detener descarga",
+    https_download_time: "Enlace disponible: {time}",
+    https_download_expired: "La sesión de descarga ha vencido.",
+    https_qr_alt: "QR para descargar el certificado público del bridge",
+    https_help: "Abrir guía oficial",
+    https_guide_ios:
+      "Instala el perfil descargado.\nActiva la confianza total para la CA del bridge.",
+    https_guide_android:
+      "Instala el certificado como CA desde los ajustes de seguridad del dispositivo.",
+    https_guide_windows:
+      "Instala la CA como raíz de confianza.\nCierra y vuelve a abrir el navegador.",
+    https_guide_macos:
+      "Instala la CA en Acceso a Llaveros.\nActiva Confiar siempre para SSL en ese certificado.",
+    https_health: "Dirección para comprobar HTTPS",
+    https_lan_hint:
+      "Si no abre, comprueba que ambos equipos estén en la misma red, sin aislamiento de clientes, y que el firewall de Windows permita el bridge en redes privadas.",
+    https_ip_notice:
+      "Si cambia la IP del bridge, actualiza el host en la aplicación web que envía las impresiones. La CA sigue siendo la misma.",
     active: "Activo",
-    app_description: "Puente local de impresión para tu punto de venta.",
+    app_description: "Imprime tickets, comandas y otros documentos desde aplicaciones web.",
     refresh: "Actualizar",
-    advanced_settings: "Ajustes avanzados",
+    advanced_settings: "Ajustes",
     bridge_host: "Host del puente",
-    bridge_host_description: "Configúralo en el POS que enviará los trabajos.",
+    bridge_host_description: "Configúralo en la aplicación web que enviará las impresiones.",
     access_token: "Token de acceso",
     access_token_description: "Obligatorio para las solicitudes de impresión.",
     copy: "Copiar",
@@ -385,9 +574,9 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     auto_start_description:
       "El Bridge se ejecutará en segundo plano al iniciar sesión.",
     auto_start_macos_move_to_applications:
-      "Mueve POS Ticket Bridge a Aplicaciones, ejecuta xattr -dr com.apple.quarantine \"/Applications/POS Ticket Bridge.app\" y ábrelo de nuevo para activar el inicio automático.",
+      'Mueve POS Ticket Bridge a Aplicaciones, ejecuta xattr -dr com.apple.quarantine "/Applications/POS Ticket Bridge.app" y ábrelo de nuevo para activar el inicio automático.',
     allowed_origins: "Orígenes autorizados",
-    save_settings: "Guardar ajustes",
+    save_settings: "Guardar cambios",
     language: "Idioma",
     language_system: "Sistema",
     language_spanish: "Español",
@@ -602,12 +791,119 @@ const translations: Record<SupportedLanguage, Dictionary> = {
       "Confirma un perfil local y escribe el modelo antes de exportarlo.",
   },
   en: {
+    https_trust_ready:
+      "This computer trusts the bridge CA. Restart the browser if it was already open.",
+    https_trust_failed:
+      "Trust on this computer could not be confirmed. Retry installation and accept the system prompt if shown.",
+    https_trust_remove_failed:
+      "Could not remove the system CA. Certificates were preserved so you can retry resetting.",
+    https_trust_retry: "Trust this computer",
+    https_step_os: "Step 1 of 2 · Choose the operating system",
+    https_step_qr: "Step 2 of 2 · Set up {os}",
+    https_step_os_hint:
+      "Continue to show a QR code available for {time} (min:sec).",
+    https_step_continue: "Continue",
+    https_step_back: "Change operating system",
+    https_qr_preparing: "Preparing QR…",
+    https_qr_regenerate: "Reactivate download",
+    https_technical_details: "Technical details",
+    https_scan_install: "Scan and install",
+    settings_https_draft_hint:
+      "Applied when saved. Turning HTTPS off preserves the CA and installed trust.",
+    settings_save_failed:
+      "Could not save changes. Check the connection and retry; your edits remain in the form.",
+    settings_active_connection: "Current connection: {transport} · {host}",
+    settings_application_section: "Application",
+    settings_advanced_section: "Advanced",
+    settings_actions_hint:
+      "These actions run separately. Save or cancel your edits before using them.",
+    connection_actions: "Connection actions",
+    webpos_connection: "Web application connection",
+    https_actions: "Local HTTPS actions",
+    https_access_description:
+      "Manage HTTPS trust on this computer and on the devices that will print.",
+    https_setup_other: "Set up another device",
+    https_scan_from_device:
+      "On the device that will print, connected to the same network, scan this QR code",
+    https_open_link_alternative: "or open this link:",
+    https_copy_download: "Copy setup link",
+    https_test_connection: "Test HTTPS connection",
+    https_video_help: "Watch the video",
+    https_help_intro: "Having trouble?",
+    https_help_or: "or read the",
+    https_guide_help: "official guide",
+    https_guide_help_only: "Read the official guide",
+    https_video_unavailable:
+      "The help video is not configured for this system.",
+    https_validate_instruction:
+      "Open {url} on the device that will print to check the connection.",
+    https_copy_health: "Copy HTTPS test address",
+    https_same_network: "Connect both devices to the same network.",
+    https_title: "Local HTTPS",
+    https_enable: "Enable local HTTPS",
+    https_settings_hint:
+      "Enabling HTTPS installs the CA on this computer for the current user. Accept the system prompt if shown. Turning it off preserves certificates and trust.",
+    https_interface: "Network interface and IPv4",
+    https_select_interface: "Select a private network interface for HTTPS.",
+    https_interface_missing:
+      "The selected IPv4 is no longer available. Select an interface to restore HTTPS.",
+    https_store_invalid:
+      "Cannot read or validate the HTTPS configuration. The files have been preserved. Retry or reset HTTPS.",
+    https_storage_unavailable:
+      "Windows secure encryption is unavailable. No unencrypted keys were saved.",
+    https_decryption_failed:
+      "Cannot decrypt the HTTPS keys with this Windows user. The files have been preserved.",
+    https_ca_expired:
+      "The CA has expired or is not yet valid. Check the computer clock; if expired, reset HTTPS and install the new CA.",
+    https_operation_failed:
+      "Could not update HTTPS. Check the selected interface and that the port is available.",
+    https_reserved_port: "Port 9978 is reserved for device setup.",
+    https_invalid_os: "Select a supported operating system.",
+    https_setup_unavailable:
+      "Could not start downloads on port {port}. Check that it is available and the interface is connected.",
+    https_must_be_active: "Enable HTTPS before setting up a device.",
+    https_reset: "Reset local HTTPS",
+    https_reset_confirm:
+      "Trust for this CA will be removed for the current user, and the CA, HTTPS keys and certificates will be deleted. The bridge will return to HTTP and keep its token and printers. To use HTTPS again, you must install the new CA on your devices. Continue?",
+    https_unconfigured: "Not configured",
+    https_active: "Active",
+    https_paused: "Paused",
+    https_stopped: "Listener stopped",
+    https_state: "HTTPS state: {state}",
+    https_transport: "Transport: {transport}",
+    https_expiry: "Certificate valid until: {date}",
+    https_ca_expiry: "CA valid until: {date}",
+    https_fingerprint: "CA SHA-256 fingerprint",
+    https_retry: "Retry connection",
+    https_setup: "Set up device",
+    https_setup_description:
+      "Install the CA so this device trusts the bridge's HTTPS. Choose its operating system and open the download from the same network.",
+    https_os: "Device operating system",
+    https_download_start: "Start temporary download",
+    https_download_stop: "Stop download",
+    https_download_time: "Link available for {time}",
+    https_download_expired: "The download session has expired.",
+    https_qr_alt: "QR to download the bridge's public certificate",
+    https_help: "Open official guide",
+    https_guide_ios:
+      "Install the downloaded profile.\nEnable full trust for the bridge CA.",
+    https_guide_android:
+      "Install the certificate as a CA from the device security settings.",
+    https_guide_windows:
+      "Install the CA as a trusted root.\nClose and reopen your browser.",
+    https_guide_macos:
+      "Install the CA in Keychain Access.\nSet SSL to Always Trust for that certificate.",
+    https_health: "Address to check HTTPS",
+    https_lan_hint:
+      "If it does not open, check that both devices are on the same network without client isolation, and that Windows Firewall allows the bridge on private networks.",
+    https_ip_notice:
+      "If the bridge IP changes, update the host in the web application that sends print jobs. The CA stays the same.",
     active: "Active",
-    app_description: "Local printing bridge for your point of sale.",
+    app_description: "Print receipts, kitchen tickets, and other documents from web applications.",
     refresh: "Refresh",
-    advanced_settings: "Advanced settings",
+    advanced_settings: "Settings",
     bridge_host: "Bridge host",
-    bridge_host_description: "Configure it in the POS that will send jobs.",
+    bridge_host_description: "Configure it in the web application that will send print jobs.",
     access_token: "Access token",
     access_token_description: "Required for print requests.",
     copy: "Copy",
@@ -689,9 +985,9 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     auto_start_description:
       "The Bridge will run in the background when you sign in.",
     auto_start_macos_move_to_applications:
-      "Move POS Ticket Bridge to Applications, run xattr -dr com.apple.quarantine \"/Applications/POS Ticket Bridge.app\", and open it again to enable automatic startup.",
+      'Move POS Ticket Bridge to Applications, run xattr -dr com.apple.quarantine "/Applications/POS Ticket Bridge.app", and open it again to enable automatic startup.',
     allowed_origins: "Allowed origins",
-    save_settings: "Save settings",
+    save_settings: "Save changes",
     language: "Language",
     language_system: "System",
     language_spanish: "Español",

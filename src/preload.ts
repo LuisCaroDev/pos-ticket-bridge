@@ -12,6 +12,20 @@ const invoke = async (channel: string, ...args: unknown[]) => {
 };
 contextBridge.exposeInMainWorld("bridge", {
   platform: process.platform,
+  httpsStatus: () => invoke("bridge:https-status"),
+  httpsTrust: () => invoke("bridge:https-trust"),
+  httpsActivate: (selection?: { name: string; address: string }) =>
+    invoke("bridge:https-activate", selection),
+  httpsPause: () => invoke("bridge:https-pause"),
+  httpsSelect: (selection: { name: string; address: string }) =>
+    invoke("bridge:https-select", selection),
+  httpsEnroll: (os: string) => invoke("bridge:https-enroll", os),
+  httpsStopEnrollment: () => invoke("bridge:https-enroll-stop"),
+  httpsReset: () => invoke("bridge:https-reset"),
+  httpsVideos: () => invoke("bridge:https-videos"),
+  httpsVideo: (os: string) => invoke("bridge:https-video", os),
+  httpsHealth: () => invoke("bridge:https-health"),
+  httpsHelp: (os: string) => invoke("bridge:https-help", os),
   status: () => invoke("bridge:status"),
   diagnostics: () => invoke("bridge:diagnostics"),
   settings: (input: unknown) => invoke("bridge:settings", input),

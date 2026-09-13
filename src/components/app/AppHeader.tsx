@@ -12,14 +12,17 @@ type AppHeaderProps = {
 export const AppHeader = memo(function AppHeader({
   onOpenSettings,
 }: AppHeaderProps) {
-  const { appVersion, refresh } = useBridge();
+  const { appVersion, refresh, status } = useBridge();
+  const running = status?.localHttps?.transport !== "stopped";
   const { tr } = useI18n();
   return (
     <header className="flex flex-wrap items-center justify-between gap-4">
       <div>
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold">POS Ticket Bridge</h1>
-          <Badge variant="secondary">{tr("active")}</Badge>
+          <Badge variant={running ? "secondary" : "destructive"}>
+            {tr(running ? "active" : "https_stopped")}
+          </Badge>
           {appVersion && (
             <span className="text-xs text-muted-foreground">v{appVersion}</span>
           )}

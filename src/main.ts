@@ -1,3 +1,4 @@
+import { LocalCaTrust } from "./core/local-ca-trust";
 import {
   app,
   BrowserWindow,
@@ -7,9 +8,11 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  safeStorage,
+  shell,
 } from "electron";
 import path from "node:path";
-import { errorPayload, resolveLanguage, t } from "./i18n";
+import { BridgeError, errorPayload, resolveLanguage, t } from "./i18n";
 import {
   AutoStartManager,
   BACKGROUND_ARGUMENT,
@@ -34,11 +37,20 @@ import {
 import { defaultPrinterLanguage } from "./core/printer-profiles";
 import { createBridgeServer } from "./core/server";
 import type { Diagnostic } from "./core/types";
+import { HttpsStore } from "./core/https-store";
+import {
+  LocalHttpsManager,
+  type ListenerConfiguration,
+} from "./core/local-https";
+import { httpsGuideUrl, httpsVideoUrl } from "./core/https-help";
+import type { ClientOS, NetworkSelection } from "./core/local-https-types";
 
 let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let bridge: ReturnType<typeof createBridgeServer>;
+let configStore: ConfigStore;
+let httpsManager: LocalHttpsManager;
 let autoStartManager: AutoStartManager;
 let autoStartStatus: AutoStartStatus = {
   enabled: false,
@@ -92,6 +104,7 @@ function ensureWindow() {
   window.on("close", (event) => {
     if (!quitting) {
       event.preventDefault();
+      void httpsManager?.stopEnrollment().catch((): void => undefined);
       window?.hide();
       hideDockIcon();
     }
@@ -126,13 +139,45 @@ function showWindow() {
   showDockIcon();
 }
 async function restartBridge() {
-  await bridge?.stop().catch(() => undefined);
-  bridge = createBridgeServer(
-    new ConfigStore(path.join(app.getPath("userData"), "config.json")),
-    activeLanguage,
-  );
-  await bridge.start();
+  await httpsManager.restart();
   buildTray();
+}
+async function replaceListener(configuration: ListenerConfiguration | null) {
+  await bridge?.stop();
+  bridge = createBridgeServer(configStore, activeLanguage, {
+    ...(configuration
+      ? {
+          tls: configuration.tls,
+          host: configuration.host,
+          port: configuration.port,
+        }
+      : {}),
+    httpsStatus: () => httpsManager.status(),
+  });
+  if (configuration) await bridge.start();
+}
+async function internalRequest(route: string, method = "POST", body?: unknown) {
+  // Desktop actions execute internally and never disable TLS verification.
+  if (
+    !/^\/(?:api\/printers\/[^/?]+\/(?:test|open-drawer)|test\/[^/?]+)$/.test(
+      route,
+    ) ||
+    method !== "POST"
+  )
+    throw new BridgeError("invalid_request");
+  const response = await bridge.app.inject({
+    method: "POST",
+    url: route,
+    headers: {
+      "x-agent-token": configStore.get().token,
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+    },
+    ...(body !== undefined ? { payload: JSON.stringify(body) } : {}),
+  });
+  const payload = response.json();
+  if (response.statusCode >= 400)
+    throw payload.error || { code: "operation_failed" };
+  return payload;
 }
 function createAutoStartManager() {
   return new AutoStartManager({
@@ -180,10 +225,7 @@ function buildTray() {
         click: async () => {
           const first = config.printers[0];
           try {
-            await fetch(`http://127.0.0.1:${config.port}/test/${first.id}`, {
-              method: "POST",
-              headers: { "x-agent-token": config.token },
-            });
+            await internalRequest(`/test/${first.id}`);
           } catch (error) {
             dialog.showErrorBox(
               t(language, "print_failed"),
@@ -218,7 +260,7 @@ function buildTray() {
 async function quit() {
   quitting = true;
   tray?.destroy();
-  await bridge?.stop().catch(() => undefined);
+  await httpsManager?.shutdown().catch((): void => undefined);
   app.quit();
 }
 function registerIpc() {
@@ -244,16 +286,79 @@ function registerIpc() {
     autoStartStatus,
   }));
   ipc("bridge:diagnostics", () => bridge.recentDiagnostics());
+  ipc("bridge:https-status", () => httpsManager.status());
+  ipc("bridge:https-trust", () => httpsManager.trustLocal());
+  ipc("bridge:https-activate", (_event, selection?: NetworkSelection) =>
+    httpsManager.activate(selection),
+  );
+  ipc("bridge:https-pause", () => httpsManager.pause());
+  ipc("bridge:https-select", (_event, selection: NetworkSelection) =>
+    httpsManager.select(selection),
+  );
+  ipc("bridge:https-enroll", (_event, os: ClientOS) =>
+    httpsManager.startEnrollment(os),
+  );
+  ipc("bridge:https-enroll-stop", () => httpsManager.stopEnrollment());
+  ipc("bridge:https-reset", async () => {
+    const language = activeLanguage();
+    const confirmation = await dialog.showMessageBox({
+      type: "warning",
+      title: t(language, "https_reset"),
+      message: t(language, "https_reset_confirm"),
+      buttons: [t(language, "cancel"), t(language, "https_reset")],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (confirmation.response === 1) return httpsManager.reset();
+    return httpsManager.status();
+  });
+  ipc("bridge:https-videos", () =>
+    Object.fromEntries(
+      ["ios", "android", "windows", "macos"].map((os) => [
+        os,
+        Boolean(httpsVideoUrl(os as ClientOS)),
+      ]),
+    ),
+  );
+  ipc("bridge:https-video", (_event, os: ClientOS) => {
+    const url = httpsVideoUrl(os);
+    if (!url) throw new BridgeError("https_video_unavailable");
+    return shell.openExternal(url);
+  });
+  ipc("bridge:https-health", () => {
+    const current = httpsManager.status();
+    if (current.transport !== "https")
+      throw new BridgeError("https_must_be_active");
+    return shell.openExternal(current.host + "/health");
+  });
+  ipc("bridge:https-help", (_event, os: ClientOS) => {
+    const url = httpsGuideUrl(os);
+    if (!url) throw new BridgeError("https_invalid_os");
+    return shell.openExternal(url);
+  });
   ipc("bridge:settings", async (_event, input) => {
-    const oldPort = bridge.store.get().port;
-    const oldLanguage = bridge.store.get().language;
-    const oldAutoStart = bridge.store.get().autoStart;
-    const config = bridge.store.settings(input);
-    if (oldAutoStart !== config.autoStart)
-      await synchronizeAutoStart(config.autoStart);
-    if (oldPort !== config.port) await restartBridge();
-    else if (oldLanguage !== config.language) buildTray();
-    return config;
+    let before = configStore.get();
+    await httpsManager.applySettings(
+      input.https,
+      async () => {
+        before = configStore.get();
+        const next = configStore.settings(input);
+        if (before.autoStart !== next.autoStart)
+          await synchronizeAutoStart(next.autoStart);
+      },
+      async () => {
+        configStore.settings({
+          port: before.port,
+          allowedOrigins: before.allowedOrigins,
+          language: before.language,
+          autoStart: before.autoStart,
+        });
+        if (before.autoStart !== input.autoStart)
+          await synchronizeAutoStart(before.autoStart);
+      },
+    );
+    buildTray();
+    return configStore.get();
   });
   ipc("bridge:create-printer", (_event, input, draftSessionId?: string) => {
     const before = new Set(
@@ -334,17 +439,7 @@ function registerIpc() {
   ipc(
     "bridge:request",
     async (_event, route: string, method = "POST", body?: unknown) => {
-      const config = bridge.store.get();
-      const headers: Record<string, string> = { "x-agent-token": config.token };
-      if (body !== undefined) headers["content-type"] = "application/json";
-      const response = await fetch(`http://127.0.0.1:${config.port}${route}`, {
-        method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
-      const payload = await response.json();
-      if (!response.ok) throw payload.error || { code: "operation_failed" };
-      return payload;
+      return internalRequest(route, method, body);
     },
   );
   ipc("bridge:test-printer", (_event, input, options) =>
@@ -371,9 +466,33 @@ if (!isPrimaryInstance) {
     app.setName("POS Ticket Bridge");
     app.setAppUserModelId("com.pos.ticketbridge");
     autoStartManager = createAutoStartManager();
+    configStore = new ConfigStore(
+      path.join(app.getPath("userData"), "config.json"),
+    );
+    httpsManager = new LocalHttpsManager(
+      new HttpsStore(
+        path.join(app.getPath("userData"), "local-https.json"),
+        safeStorage,
+      ),
+      {
+        trust: new LocalCaTrust(
+          path.join(app.getPath("userData"), "local-https-ca.cer"),
+        ),
+        getPort: () => configStore.get().port,
+        replaceListener,
+        restorePort: (port) => {
+          configStore.settings({ port });
+        },
+      },
+    );
+    // Keep settings available when an interface or certificate needs repair.
+    bridge = createBridgeServer(configStore, activeLanguage, {
+      httpsStatus: () => httpsManager.status(),
+    });
     registerIpc();
     try {
-      await restartBridge();
+      await httpsManager.initialize();
+      buildTray();
       await synchronizeAutoStart(bridge.store.get().autoStart);
     } catch (error) {
       const message = (error as Error).message;

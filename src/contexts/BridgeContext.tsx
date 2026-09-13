@@ -18,6 +18,7 @@ import type { PrinterForm } from "@/components/app/types";
 import { useI18n } from "./I18nContext";
 
 type SettingsInput = {
+  https?: import("@/core/local-https-types").LocalHttpsDraft;
   language: LanguageSetting;
   port: number;
   allowedOrigins: string[];
@@ -73,7 +74,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     useState<"macos_move_to_applications">();
   const languageRef = useRef(language);
 
-  useEffect(() => {
+  useEffect((): void | (() => void) => {
     languageRef.current = language;
   }, [language]);
 
@@ -119,13 +120,40 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
-  useEffect(() => {
+  useEffect((): void | (() => void) => {
+    if (typeof window.bridge.httpsStatus !== "function") return;
+    let alive = true;
+    const update = async () => {
+      try {
+        const localHttps = await window.bridge.httpsStatus();
+        if (alive)
+          setStatus((current: any) =>
+            current
+              ? {
+                  ...current,
+                  localHttps,
+                  suggestedHosts: localHttps.host ? [localHttps.host] : [],
+                }
+              : current,
+          );
+      } catch {
+        /* Explicit actions surface errors; background polling stays quiet. */
+      }
+    };
+    const timer = window.setInterval(() => void update(), 1000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect((): void | (() => void) => {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    const interval = window.setInterval(() => void refreshDiagnostics(), 1000);
-    return () => window.clearInterval(interval);
+  useEffect((): void | (() => void) => {
+    const interval = window.setInterval((): void => { void refreshDiagnostics(); }, 1000);
+    return (): void => window.clearInterval(interval);
   }, [refreshDiagnostics]);
 
   const perform = useCallback(
@@ -157,6 +185,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       Boolean(
         await perform("settings", () =>
           window.bridge.settings({
+            https: input.https,
             port: input.port,
             allowedOrigins: input.allowedOrigins,
             language: input.language,

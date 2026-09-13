@@ -136,7 +136,10 @@ export const settingsFormSchema = z
       .refine(
         (value) => Number(value) >= 1 && Number(value) <= 65535,
         code("validation_port"),
-      ),
+      )
+      .refine((value) => Number(value) !== 9978, {
+        message: "https_reserved_port",
+      }),
     origins: z.string(),
     autoStart: z.boolean(),
   })

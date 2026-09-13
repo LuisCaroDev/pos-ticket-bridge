@@ -1,6 +1,9 @@
 import { memo } from "react";
 import {
   Banknote,
+  Bluetooth,
+  Network,
+  Usb,
   CheckCircle2,
   Pencil,
   Plus,
@@ -8,6 +11,11 @@ import {
   ScrollText,
   Trash2,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -68,7 +76,7 @@ export const PrinterList = memo(function PrinterList({
                   <Badge variant={printer.enabled ? "secondary" : "outline"}>
                     {printer.enabled ? tr("enabled") : tr("disabled")}
                   </Badge>
-                  <Badge variant="outline">{printer.tipo}</Badge>
+                  <ConnectionTypeIcon type={printer.tipo} />
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {connectionLabel(printer)}
@@ -161,3 +169,29 @@ export const PrinterList = memo(function PrinterList({
     </Card>
   );
 });
+
+const connectionIcons = { bluetooth: Bluetooth, network: Network, usb: Usb };
+
+function ConnectionTypeIcon({ type }: { type: keyof typeof connectionIcons }) {
+  const { tr } = useI18n();
+  const Icon = connectionIcons[type];
+  if (!Icon) return null;
+  const label = tr(type);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            role="img"
+            aria-label={label}
+            className="inline-flex shrink-0 items-center text-muted-foreground"
+          />
+        }
+      >
+        <Icon aria-hidden="true" className="size-4" />
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}

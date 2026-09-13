@@ -313,8 +313,10 @@ function AppContent() {
       </PrinterWorkspace>
       <div className="mx-auto w-full max-w-6xl">
         <SettingsDialog
+          localHttps={status?.localHttps}
+          saveError={error}
           open={settingsOpen}
-          busy={busy === "settings"}
+          busy={Boolean(busy)}
           languageSetting={languageSetting}
           port={port}
           origins={origins}
