@@ -39,6 +39,7 @@ import {
   type Printer,
 } from "./types";
 import { PrintRequestSchema } from "./print-job-contract";
+import { printQueue } from "./print-queue";
 const isLocal = (origin: unknown, port: number) =>
   !origin ||
   origin === `http://localhost:${port}` ||
@@ -120,6 +121,7 @@ export function createBridgeServer(
         ...printer,
         runtime: {
           connection: await checkConnection(printer),
+          queue: printQueue.status(printer),
           printProfile: publicPrintProfile(resolvePrintProfile(printer)),
           lastTest: lastTests.get(printer.id) || null,
           lastDiagnostic:

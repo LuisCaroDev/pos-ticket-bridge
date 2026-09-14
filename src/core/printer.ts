@@ -11,6 +11,7 @@ import {
   type ResolvedPrintProfile,
 } from "./printer-profiles";
 import type { PrintJob, Printer } from "./types";
+import { printQueue } from "./print-queue";
 import {
   bluetoothSerialOptions,
   resolveBluetoothSerialPath,
@@ -592,13 +593,21 @@ async function withPrinter(
   hooks: Hooks = {},
   options: WithPrinterOptions = {},
 ) {
-  try {
-    return await withPrinterAttempt(definition, work, hooks, options);
-  } catch (error) {
-    if (!shouldRetryBluetoothNotReady(definition, error)) throw error;
-    emit(hooks, "adapter_retry_after_not_ready");
-    return withPrinterAttempt(definition, work, hooks, options);
-  }
+  // Capture configuration before waiting for another operation.
+  const snapshot: Printer = JSON.parse(JSON.stringify(definition));
+  const acceptedOptions = { ...options };
+  const queuedAt = Date.now();
+  emit(hooks, "print_queue_entered");
+  return printQueue.run(snapshot, async () => {
+    emit(hooks, "print_queue_started", { waitMs: Date.now() - queuedAt });
+    try {
+      return await withPrinterAttempt(snapshot, work, hooks, acceptedOptions);
+    } catch (error) {
+      if (!shouldRetryBluetoothNotReady(snapshot, error)) throw error;
+      emit(hooks, "adapter_retry_after_not_ready");
+      return withPrinterAttempt(snapshot, work, hooks, acceptedOptions);
+    }
+  });
 }
 
 export const printJob = (
@@ -607,13 +616,16 @@ export const printJob = (
   hooks: Hooks = {},
   imageOmitted?: string,
   options: WithPrinterOptions = {},
-) =>
-  withPrinter(
+) => {
+  const acceptedJob: PrintJob = JSON.parse(JSON.stringify(job));
+  return withPrinter(
     definition,
-    (printer, profile) => render(printer, job, hooks, profile, imageOmitted),
+    (printer, profile) =>
+      render(printer, acceptedJob, hooks, profile, imageOmitted),
     hooks,
     options,
   );
+};
 export const openDrawer = (definition: Printer, hooks: Hooks = {}) =>
   withPrinter(
     definition,
