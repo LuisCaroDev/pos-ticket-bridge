@@ -1,3 +1,4 @@
+import iconv from "iconv-lite";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -1453,6 +1454,24 @@ describe("POS Ticket Bridge", () => {
               width: 1,
               height: 1,
             },
+            {
+              type: "table-row",
+              left: "1x Combo futbolero",
+              right: "$ 10.000",
+              bold: true,
+            },
+            {
+              type: "table-row",
+              left: "1x Sopa de Patacón · Personal",
+              right: "$ 10.000",
+              bold: true,
+            },
+            {
+              type: "table-row",
+              left: "1x Torta de Chocolate · Personal",
+              right: "$ 10.000",
+              bold: true,
+            },
             { type: "separator", style: "solid" },
             { type: "cut" },
           ],
@@ -1481,6 +1500,15 @@ describe("POS Ticket Bridge", () => {
       true,
     );
     expect(output.includes(Buffer.from("-".repeat(48)))).toBe(true);
+    // Exercise renderTableRow through the real network transport and ESC/POS encoder.
+    for (const label of [
+      "1x Combo futbolero",
+      "1x Sopa de Patacón · Personal",
+      "1x Torta de Chocolate · Personal",
+    ]) {
+      const expected = label + " ".repeat(48 - label.length - 8) + "$ 10.000\n";
+      expect(output.includes(iconv.encode(expected, "CP858"))).toBe(true);
+    }
     expect(output.includes(Buffer.from("áéíóúüñÑ ¿¡ €", "utf8"))).toBe(false);
   });
 

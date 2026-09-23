@@ -1,3 +1,4 @@
+import { nativeTableRowLines } from "./native-table-row";
 /* eslint-disable @typescript-eslint/no-var-requires */
 import { BrowserWindow } from "electron";
 import {
@@ -405,20 +406,19 @@ async function renderTableRow(
     );
     return;
   }
-  printer.tableCustom([
-    {
-      text: left,
-      width: 0.65,
-      align: value.align || "left",
-      style: value.bold ? "b" : "normal",
-    },
-    {
-      text: right,
-      width: 0.35,
-      align: "right",
-      style: value.bold ? "b" : "normal",
-    },
-  ]);
+  // Fix the printer state explicitly: rows always use the profile's standard cells.
+  align(printer, "left");
+  selectNativeFont(printer, "standard");
+  printer.size(1, 1);
+  printer.style(Boolean(value.bold), false, 0);
+  for (const line of nativeTableRowLines(
+    { left, right, align: value.align },
+    profile.columns,
+    profile.encoding,
+  )) {
+    printer.text(line);
+  }
+  printer.style(false, false, 0);
 }
 async function render(
   printer: any,
