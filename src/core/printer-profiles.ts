@@ -45,8 +45,8 @@ export const defaultCustomProfile = (
   language: PrinterLanguage,
 ): CustomPrintProfile =>
   language === "es"
-    ? { encoding: "CP850", codeTable: 2, unicodeFallback: "auto" }
-    : { encoding: "CP437", codeTable: 0, unicodeFallback: "auto" };
+    ? { encoding: "CP850", codeTable: 2, unicodeFallback: "native" }
+    : { encoding: "CP437", codeTable: 0, unicodeFallback: "native" };
 
 const dimensions = (widthMm: 58 | 80) =>
   widthMm === 58
@@ -98,7 +98,8 @@ export const resolvePrintProfile = (printer: Printer): ResolvedPrintProfile => {
     language,
     encoding: values.encoding,
     codeTable: values.codeTable,
-    unicodeFallback: "auto",
+    unicodeFallback:
+      catalogProfile.id === defaultAutomaticProfileId() ? "auto" : "native",
     nativePolicy: values.nativePolicy,
     source: sourceFor(catalogProfile.id),
     coverage: shouldUseSpanishNative ? "spanish-latin" : "ascii",
@@ -124,10 +125,10 @@ export const publicPrintProfile = (profile: ResolvedPrintProfile) => ({
   catalogVersion: profile.catalogVersion,
   supportsRaster: profile.supportsRaster,
   unicodeCoverage:
-    profile.unicodeFallback === "raster" || profile.nativePolicy === "ascii"
-      ? "bitmap-fallback"
-      : profile.unicodeFallback === "native"
-        ? "native-only"
+    profile.unicodeFallback === "native"
+      ? "native-only"
+      : profile.unicodeFallback === "raster" || profile.nativePolicy === "ascii"
+        ? "bitmap-fallback"
         : "profile-native",
 });
 

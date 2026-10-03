@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AppHeader } from "@/components/app/AppHeader";
 import { BridgeAccessCards } from "@/components/app/BridgeAccessCards";
-import { DiscoveryPanel } from "@/components/app/DiscoveryPanel";
 import { PrinterEditorPanel } from "@/components/app/PrinterEditorPanel";
 import { PrinterList } from "@/components/app/PrinterList";
 import { PrinterWorkspace } from "@/components/app/PrinterWorkspace";
@@ -28,7 +27,6 @@ function AppContent() {
   const [form, setForm] = useState<PrinterForm>();
   const [draftDiagnostic, setDraftDiagnostic] = useState<any>();
   const [draftSessionId, setDraftSessionId] = useState<string>();
-  const [detectedCreation, setDetectedCreation] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const isWindows = window.bridge.platform === "win32";
   const { language, tr } = useI18n();
@@ -51,10 +49,9 @@ function AppContent() {
   } = useBridge();
 
   const openCreate = useCallback(
-    (initial?: PrinterForm, detected = false) => {
+    (initial?: PrinterForm) => {
       const next = initial || blankPrinter();
       setDraftDiagnostic(undefined);
-      setDetectedCreation(detected);
       setDraftSessionId(
         globalThis.crypto?.randomUUID?.() ||
           `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -64,28 +61,11 @@ function AppContent() {
     },
     [loadProfileCatalog],
   );
-  const openCreateFromDiscovery = useCallback(
-    (detected: PrinterForm) => {
-      const defaults = blankPrinter();
-      const result = { ...detected };
-      delete result.id;
-      openCreate(
-        {
-          ...defaults,
-          ...result,
-          connection: { ...defaults.connection, ...result.connection },
-        },
-        true,
-      );
-    },
-    [openCreate],
-  );
   const openEdit = useCallback(
     (printer: any) => {
       const next = formFor(printer);
       setDraftDiagnostic(undefined);
       setDraftSessionId(undefined);
-      setDetectedCreation(false);
       setForm(next);
       void loadProfileCatalog(next);
     },
@@ -97,13 +77,12 @@ function AppContent() {
         void window.bridge.discardDraftDiagnostics(draftSessionId);
       setDraftDiagnostic(undefined);
       setDraftSessionId(undefined);
-      setDetectedCreation(false);
       setForm(undefined);
     },
     [draftSessionId, form?.id],
   );
   const save = useCallback(async () => {
-    if (!form) return;
+    if (!form) return undefined;
     const printer = printerForSaving(form);
     const saved = await perform("save", () =>
       printer.id
@@ -118,18 +97,19 @@ function AppContent() {
     const result = await perform("test-draft", () =>
       window.bridge.testPrinter(form, { draftSessionId }),
     );
-    if (!result) return;
+    if (!result) return undefined;
     setDraftDiagnostic(result.diagnostic);
     if (!result.ok) {
       reportMessage(result.error);
-      return;
+      return result;
     }
     setNotice(
       result.diagnostic?.status === "warning"
         ? translateMessage(language, result.diagnostic.message)
         : tr("test_sent"),
     );
-  }, [draftSessionId, form, perform, reportMessage, setNotice, tr]);
+    return result;
+  }, [draftSessionId, form, language, perform, reportMessage, setNotice, tr]);
   const runCharacterProfileTrial = useCallback(
     async (candidate: CharacterProfileCandidate) => {
       if (!form) return false;
@@ -279,7 +259,6 @@ function AppContent() {
       <BridgeAccessCards />
       <section className="flex flex-col gap-5">
         <PrinterList onCreate={() => openCreate()} onEdit={openEdit} />
-        <DiscoveryPanel onUseResult={openCreateFromDiscovery} />
       </section>
     </>
   );
@@ -287,7 +266,6 @@ function AppContent() {
     <PrinterEditorPanel
       form={form}
       draftSessionId={draftSessionId}
-      detected={detectedCreation}
       diagnostics={formDiagnostics}
       profileCatalog={profileCatalog}
       isWindows={isWindows}

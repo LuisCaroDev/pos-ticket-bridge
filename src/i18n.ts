@@ -11,6 +11,7 @@ export class BridgeError extends Error {
   constructor(
     public readonly code: string,
     public readonly params?: MessageParams,
+    public readonly technicalCause?: string,
   ) {
     super(code);
     this.name = "BridgeError";
@@ -157,16 +158,34 @@ export type TranslationKey =
   | "no_devices"
   | "edit_printer"
   | "add_printer"
+  | "add_printer_connection_step"
+  | "configure_printer_step"
+  | "change_connection"
+  | "choose_connection_type"
+  | "network_connection_description"
+  | "bluetooth_connection_description"
+  | "usb_connection_description"
+  | "keep_current_connection"
+  | "back"
+  | "manual_connection"
+  | "manual_connection_description"
+  | "use_this_connection"
+  | "vendor_id"
+  | "product_id"
+  | "technical_identifiers"
   | "detected_connection_notice"
   | "discard_printer_changes_title"
   | "discard_printer_changes_description"
   | "discard_changes"
   | "continue_editing"
   | "check_connection_before_saving"
+  | "configure_printer_description"
   | "connection_section"
   | "print_profile_section"
   | "operation_section"
   | "advanced_printing"
+  | "advanced_printing_summary"
+  | "advanced_printing_summary_bluetooth"
   | "name"
   | "type"
   | "width"
@@ -183,6 +202,7 @@ export type TranslationKey =
   | "cancel"
   | "close"
   | "test_without_saving"
+  | "test_printer_configuration"
   | "save_printer"
   | "validation_required"
   | "validation_port"
@@ -225,6 +245,12 @@ export type TranslationKey =
   | "profile_save_restart_required"
   | "profile_auto_description"
   | "profile_custom_description"
+  | "profile_warning_mixed_rendering"
+  | "profile_warning_mixed_rendering_detail"
+  | "profile_warning_native_unverified"
+  | "profile_warning_native_unverified_detail"
+  | "profile_warning_custom_unverified"
+  | "profile_warning_custom_unverified_detail"
   | "encoding"
   | "encoding_help"
   | "character_table"
@@ -236,6 +262,9 @@ export type TranslationKey =
   | "unicode_auto"
   | "unicode_raster"
   | "unicode_native"
+  | "unicode_auto_summary"
+  | "unicode_raster_summary"
+  | "unicode_native_summary"
   | "profile_custom_notice"
   | "profile_bitmap_fallback"
   | "profile_native_coverage"
@@ -355,6 +384,10 @@ export type TranslationKey =
   | "network_unreachable"
   | "serial_detected"
   | "serial_not_detected"
+  | "bluetooth_channel_unavailable"
+  | "bluetooth_port_busy"
+  | "bluetooth_port_not_found"
+  | "bluetooth_open_failed"
   | "mac_usb_detected"
   | "mac_usb_not_detected"
   | "windows_printer_required"
@@ -486,11 +519,13 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     https_ip_notice:
       "Si cambia la IP del bridge, actualiza el host en la aplicación web que envía las impresiones. La CA sigue siendo la misma.",
     active: "Activo",
-    app_description: "Imprime tickets, comandas y otros documentos desde aplicaciones web.",
+    app_description:
+      "Imprime tickets, comandas y otros documentos desde aplicaciones web.",
     refresh: "Actualizar",
     advanced_settings: "Ajustes",
     bridge_host: "Host del puente",
-    bridge_host_description: "Configúralo en la aplicación web que enviará las impresiones.",
+    bridge_host_description:
+      "Configúralo en la aplicación web que enviará las impresiones.",
     access_token: "Token de acceso",
     access_token_description: "Obligatorio para las solicitudes de impresión.",
     copy: "Copiar",
@@ -522,6 +557,25 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     no_devices: "No se encontraron dispositivos.",
     edit_printer: "Editar {name}",
     add_printer: "Agregar impresora",
+    add_printer_connection_step: "Agregar impresora · Paso 1 de 2",
+    configure_printer_step: "Configurar impresora · Paso 2 de 2",
+    change_connection: "Cambiar conexión",
+    choose_connection_type: "¿Cómo se conecta la impresora?",
+    network_connection_description:
+      "Busca impresoras accesibles por IP en tu red local.",
+    bluetooth_connection_description:
+      "Usa un dispositivo Bluetooth o un puerto serial.",
+    usb_connection_description:
+      "Usa una impresora USB instalada o conectada al equipo.",
+    keep_current_connection: "Conservar conexión actual",
+    back: "Volver",
+    manual_connection: "Configurar manualmente",
+    manual_connection_description:
+      "Usa esta alternativa si la impresora no aparece en los resultados.",
+    use_this_connection: "Usar esta conexión",
+    vendor_id: "Vendor ID",
+    product_id: "Product ID",
+    technical_identifiers: "Identificadores técnicos",
     detected_connection_notice:
       "Datos de conexión detectados; revísalos antes de guardar.",
     discard_printer_changes_title: "Descartar cambios sin guardar",
@@ -530,10 +584,16 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     discard_changes: "Descartar cambios",
     continue_editing: "Seguir editando",
     check_connection_before_saving: "Comprueba la conexión antes de guardarla.",
+    configure_printer_description:
+      "Revisa la configuración y envía un ticket de prueba antes de guardar.",
     connection_section: "Conexión",
     print_profile_section: "Perfil de impresión",
     operation_section: "Operación",
     advanced_printing: "Opciones avanzadas de impresión",
+    advanced_printing_summary:
+      "{encoding} · Tabla {codeTable} · Unicode {unicodeStrategy}",
+    advanced_printing_summary_bluetooth:
+      "{baudRate} baudios · {encoding} · Tabla {codeTable} · Unicode {unicodeStrategy}",
     name: "Nombre",
     type: "Tipo",
     width: "Ancho",
@@ -550,6 +610,7 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     cancel: "Cancelar",
     close: "Cerrar",
     test_without_saving: "Probar sin guardar",
+    test_printer_configuration: "Probar configuración",
     save_printer: "Guardar impresora",
     validation_required: "Este campo es obligatorio.",
     validation_port: "Ingresa un puerto entre 1 y 65535.",
@@ -598,9 +659,21 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     profile_save_restart_required:
       "Reinicia la aplicación para poder guardar perfiles personalizados.",
     profile_auto_description:
-      "El bridge elegirá el modo más seguro para esta impresora y este idioma.",
+      "El bridge aplicará la estrategia de caracteres definida por el perfil seleccionado.",
     profile_custom_description:
       "Esta impresora conserva tus ajustes técnicos y no recibe cambios del perfil automático.",
+    profile_warning_mixed_rendering:
+      "Algunos caracteres podrían verse diferentes.",
+    profile_warning_mixed_rendering_detail:
+      "Este perfil combina texto nativo y bitmap para los caracteres no cubiertos.",
+    profile_warning_native_unverified:
+      "Algunos caracteres podrían imprimirse incorrectamente.",
+    profile_warning_native_unverified_detail:
+      "El perfil no tiene español latino verificado y el modo nativo no usa bitmap como respaldo.",
+    profile_warning_custom_unverified:
+      "Este perfil personalizado aún no está verificado.",
+    profile_warning_custom_unverified_detail:
+      "Imprime una prueba de configuración para confirmar la codificación y la tabla de caracteres.",
     encoding: "Codificación",
     encoding_help:
       "Define cómo la impresora convierte los caracteres en bytes. Usa el valor recomendado para tu modelo.",
@@ -615,6 +688,9 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     unicode_auto: "Automático según el perfil",
     unicode_raster: "Usar bitmap para todo el texto",
     unicode_native: "Usar solo texto nativo",
+    unicode_auto_summary: "auto",
+    unicode_raster_summary: "bitmap",
+    unicode_native_summary: "nativo",
     profile_custom_notice:
       "Los cambios técnicos desactivan las actualizaciones automáticas de este perfil.",
     profile_bitmap_fallback: "Bitmap seguro para caracteres no garantizados",
@@ -765,6 +841,14 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     network_unreachable: "No responde {host}:{port}",
     serial_detected: "Puerto serial detectado; valida con ticket de prueba.",
     serial_not_detected: "No se detecta el puerto configurado",
+    bluetooth_channel_unavailable:
+      "No se pudo abrir el canal Bluetooth {path}: Windows agotó el tiempo de conexión. La impresora puede estar apagada, fuera de alcance, bloqueada o conectada a otro equipo.",
+    bluetooth_port_busy:
+      "No se puede usar el puerto Bluetooth {path} porque otra aplicación de este equipo lo tiene abierto.",
+    bluetooth_port_not_found:
+      "El puerto Bluetooth {path} ya no existe. Vuelve a detectar la impresora; Windows puede haberle asignado otro puerto.",
+    bluetooth_open_failed:
+      "No se pudo abrir el puerto Bluetooth {path}. Revisa el diagnóstico técnico para identificar la causa.",
     mac_usb_detected: "Dispositivo USB detectado en macOS",
     mac_usb_not_detected:
       "No se detecta el dispositivo USB configurado en macOS",
@@ -899,11 +983,13 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     https_ip_notice:
       "If the bridge IP changes, update the host in the web application that sends print jobs. The CA stays the same.",
     active: "Active",
-    app_description: "Print receipts, kitchen tickets, and other documents from web applications.",
+    app_description:
+      "Print receipts, kitchen tickets, and other documents from web applications.",
     refresh: "Refresh",
     advanced_settings: "Settings",
     bridge_host: "Bridge host",
-    bridge_host_description: "Configure it in the web application that will send print jobs.",
+    bridge_host_description:
+      "Configure it in the web application that will send print jobs.",
     access_token: "Access token",
     access_token_description: "Required for print requests.",
     copy: "Copy",
@@ -935,6 +1021,24 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     no_devices: "No devices found.",
     edit_printer: "Edit {name}",
     add_printer: "Add printer",
+    add_printer_connection_step: "Add printer · Step 1 of 2",
+    configure_printer_step: "Configure printer · Step 2 of 2",
+    change_connection: "Change connection",
+    choose_connection_type: "How does the printer connect?",
+    network_connection_description:
+      "Find printers available by IP on your local network.",
+    bluetooth_connection_description: "Use a Bluetooth device or serial port.",
+    usb_connection_description:
+      "Use a USB printer installed on or connected to this computer.",
+    keep_current_connection: "Keep current connection",
+    back: "Back",
+    manual_connection: "Configure manually",
+    manual_connection_description:
+      "Use this option if the printer does not appear in the results.",
+    use_this_connection: "Use this connection",
+    vendor_id: "Vendor ID",
+    product_id: "Product ID",
+    technical_identifiers: "Technical identifiers",
     detected_connection_notice:
       "Detected connection details; review them before saving.",
     discard_printer_changes_title: "Discard unsaved changes",
@@ -943,10 +1047,16 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     discard_changes: "Discard changes",
     continue_editing: "Continue editing",
     check_connection_before_saving: "Check the connection before saving it.",
+    configure_printer_description:
+      "Review the configuration and send a test ticket before saving.",
     connection_section: "Connection",
     print_profile_section: "Print profile",
     operation_section: "Operation",
     advanced_printing: "Advanced printing options",
+    advanced_printing_summary:
+      "{encoding} · Table {codeTable} · Unicode {unicodeStrategy}",
+    advanced_printing_summary_bluetooth:
+      "{baudRate} baud · {encoding} · Table {codeTable} · Unicode {unicodeStrategy}",
     name: "Name",
     type: "Type",
     width: "Width",
@@ -963,6 +1073,7 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     cancel: "Cancel",
     close: "Close",
     test_without_saving: "Test without saving",
+    test_printer_configuration: "Test configuration",
     save_printer: "Save printer",
     validation_required: "This field is required.",
     validation_port: "Enter a port between 1 and 65535.",
@@ -1009,9 +1120,19 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     profile_save_restart_required:
       "Restart the application to save custom profiles.",
     profile_auto_description:
-      "The bridge will choose the safest mode for this printer and language.",
+      "The bridge will apply the character strategy defined by the selected profile.",
     profile_custom_description:
       "This printer keeps your technical settings and does not receive automatic profile changes.",
+    profile_warning_mixed_rendering: "Some characters may look different.",
+    profile_warning_mixed_rendering_detail:
+      "This profile combines native text and bitmap rendering for uncovered characters.",
+    profile_warning_native_unverified: "Some characters may print incorrectly.",
+    profile_warning_native_unverified_detail:
+      "This profile is not verified for Latin Spanish, and native mode does not use bitmap fallback.",
+    profile_warning_custom_unverified:
+      "This custom profile has not been verified yet.",
+    profile_warning_custom_unverified_detail:
+      "Print a configuration test to confirm the encoding and character table.",
     encoding: "Encoding",
     encoding_help:
       "Controls how the printer converts characters to bytes. Use the value recommended for your model.",
@@ -1026,6 +1147,9 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     unicode_auto: "Automatic for this profile",
     unicode_raster: "Use bitmap for all text",
     unicode_native: "Use native text only",
+    unicode_auto_summary: "auto",
+    unicode_raster_summary: "bitmap",
+    unicode_native_summary: "native",
     profile_custom_notice:
       "Technical changes disable automatic updates for this profile.",
     profile_bitmap_fallback: "Safe bitmap for unsupported characters",
@@ -1173,6 +1297,14 @@ const translations: Record<SupportedLanguage, Dictionary> = {
     network_unreachable: "No response from {host}:{port}",
     serial_detected: "Serial port detected; validate it with a test ticket.",
     serial_not_detected: "The configured port was not detected",
+    bluetooth_channel_unavailable:
+      "Could not open Bluetooth channel {path}: Windows timed out while connecting. The printer may be off, out of range, stuck, or connected to another device.",
+    bluetooth_port_busy:
+      "Bluetooth port {path} cannot be used because another application on this computer has it open.",
+    bluetooth_port_not_found:
+      "Bluetooth port {path} no longer exists. Discover the printer again; Windows may have assigned a different port.",
+    bluetooth_open_failed:
+      "Could not open Bluetooth port {path}. Check the technical diagnostic to identify the cause.",
     mac_usb_detected: "USB device detected on macOS",
     mac_usb_not_detected: "The configured USB device was not detected on macOS",
     windows_printer_required:

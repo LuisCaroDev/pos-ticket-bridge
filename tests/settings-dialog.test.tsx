@@ -125,6 +125,10 @@ it("names the dialog Settings and leaves repair actions outside the form", () =>
   render(settingsView(vi.fn()));
   expect(screen.getByRole("heading", { name: "Ajustes" })).toBeTruthy();
   expect(screen.queryByText("Avanzado")).toBeNull();
-  expect(screen.queryByRole("button", { name: "Restablecer HTTPS local" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Confiar en este equipo" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Restablecer HTTPS local" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Confiar en este equipo" }),
+  ).toBeNull();
 });

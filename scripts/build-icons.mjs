@@ -3,7 +3,10 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const projectRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
 const nativeDir = path.join(projectRoot, "native");
 const source = path.join(nativeDir, "pos-ticket-bridge-icon.png");
 const iconset = path.join(nativeDir, "pos-ticket-bridge-icon.iconset");
@@ -18,23 +21,32 @@ for (const size of sizes) {
   const standard = path.join(iconset, `icon_${size}x${size}.png`);
   const retina = path.join(iconset, `icon_${size}x${size}@2x.png`);
   const retinaSize = Math.min(size * 2, 1024);
-  execFileSync("sips", ["-z", String(size), String(size), source, "--out", standard], {
-    stdio: "ignore",
-  });
-  execFileSync("sips", [
-    "-z",
-    String(retinaSize),
-    String(retinaSize),
-    source,
-    "--out",
-    retina,
-  ], { stdio: "ignore" });
-  execFileSync("sips", ["-s", "dpiWidth", "72", "-s", "dpiHeight", "72", standard], {
-    stdio: "ignore",
-  });
-  execFileSync("sips", ["-s", "dpiWidth", "144", "-s", "dpiHeight", "144", retina], {
-    stdio: "ignore",
-  });
+  execFileSync(
+    "sips",
+    ["-z", String(size), String(size), source, "--out", standard],
+    {
+      stdio: "ignore",
+    },
+  );
+  execFileSync(
+    "sips",
+    ["-z", String(retinaSize), String(retinaSize), source, "--out", retina],
+    { stdio: "ignore" },
+  );
+  execFileSync(
+    "sips",
+    ["-s", "dpiWidth", "72", "-s", "dpiHeight", "72", standard],
+    {
+      stdio: "ignore",
+    },
+  );
+  execFileSync(
+    "sips",
+    ["-s", "dpiWidth", "144", "-s", "dpiHeight", "144", retina],
+    {
+      stdio: "ignore",
+    },
+  );
   execFileSync("sips", ["--deleteColorManagementProperties", standard], {
     stdio: "ignore",
   });
@@ -65,7 +77,10 @@ icoEntries.forEach(([size, data], index) => {
   offset += data.length;
 });
 
-writeFileSync(path.join(nativeDir, "pos-ticket-bridge-icon.ico"), Buffer.concat([header, ...icoEntries.map(([, data]) => data)]));
+writeFileSync(
+  path.join(nativeDir, "pos-ticket-bridge-icon.ico"),
+  Buffer.concat([header, ...icoEntries.map(([, data]) => data)]),
+);
 
 // Build a PNG-backed ICNS container. This keeps the conversion reproducible on
 // macOS versions where iconutil no longer accepts generated iconsets.
@@ -84,7 +99,13 @@ const icnsChunks = icoEntries.map(([size, data]) => {
 });
 const icnsHeader = Buffer.alloc(8);
 icnsHeader.write("icns", 0, 4, "ascii");
-icnsHeader.writeUInt32BE(8 + icnsChunks.reduce((total, chunk) => total + chunk.length, 0), 4);
-writeFileSync(path.join(nativeDir, "pos-ticket-bridge-icon.icns"), Buffer.concat([icnsHeader, ...icnsChunks]));
+icnsHeader.writeUInt32BE(
+  8 + icnsChunks.reduce((total, chunk) => total + chunk.length, 0),
+  4,
+);
+writeFileSync(
+  path.join(nativeDir, "pos-ticket-bridge-icon.icns"),
+  Buffer.concat([icnsHeader, ...icnsChunks]),
+);
 
 rmSync(iconset, { recursive: true, force: true });

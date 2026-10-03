@@ -11,6 +11,9 @@ import {
   imageMaxHeight,
   imageMaxWidth,
   printJob,
+  queueRasterAfterNative,
+  rasterDocument,
+  testPrint,
   resizeImageContain,
   resizeImageToMaxWidth,
 } from "../src/core/printer";
@@ -28,6 +31,7 @@ import {
 } from "../src/core/compatibility-report";
 import {
   BluetoothSerialAdapter,
+  bluetoothOpenError,
   bluetoothOpenSettleMs,
   bluetoothSerialOptions,
   resolveBluetoothSerialPath,
@@ -91,6 +95,44 @@ describe("POS Ticket Bridge", () => {
     expect(bluetoothSerialOptions(9600, "win32")).toEqual({
       baudRate: 9600,
     });
+  });
+
+  it("classifies Bluetooth open failures without claiming every timeout is busy", () => {
+    const timeout = bluetoothOpenError(
+      new Error("Opening COM3: Unknown error code 121"),
+      "COM3",
+      "win32",
+    );
+    expect(timeout).toMatchObject({
+      code: "bluetooth_channel_unavailable",
+      params: { path: "COM3" },
+      technicalCause: "Opening COM3: Unknown error code 121",
+    });
+
+    const busy = Object.assign(new Error("Opening COM3: Access denied"), {
+      code: "EACCES",
+    });
+    expect(bluetoothOpenError(busy, "COM3", "win32")).toMatchObject({
+      code: "bluetooth_port_busy",
+      params: { path: "COM3" },
+    });
+
+    const missing = Object.assign(new Error("File not found"), {
+      code: "ENOENT",
+    });
+    expect(bluetoothOpenError(missing, "COM7", "win32")).toMatchObject({
+      code: "bluetooth_port_not_found",
+      params: { path: "COM7" },
+    });
+  });
+
+  it("explains Bluetooth timeouts as ambiguous in both languages", () => {
+    expect(
+      t("es", "bluetooth_channel_unavailable", { path: "COM3" }),
+    ).toContain("puede estar");
+    expect(
+      t("en", "bluetooth_channel_unavailable", { path: "COM3" }),
+    ).toContain("may be");
   });
 
   it("drains Bluetooth output without flushing it away on close", async () => {
@@ -1298,6 +1340,7 @@ describe("POS Ticket Bridge", () => {
       id: "epson-escpos-usb",
       encoding: "CP850",
       codeTable: 2,
+      unicodeFallback: "native",
     });
     expect(calls).toEqual([
       ["raw", "1b401c2e"],
@@ -1305,7 +1348,7 @@ describe("POS Ticket Bridge", () => {
       ["encoding", "CP850"],
     ]);
     expect(shouldRasterizeText(profile, "áéíóúüñÑ ¿¡")).toBe(false);
-    expect(shouldRasterizeText(profile, "€")).toBe(true);
+    expect(shouldRasterizeText(profile, "€")).toBe(false);
   });
 
   it("uses the verified Xprinter XP-E260L Spanish character table", () => {
@@ -1328,11 +1371,13 @@ describe("POS Ticket Bridge", () => {
       id: "xprinter-xp-e260l",
       encoding: "CP858",
       codeTable: 19,
+      unicodeFallback: "native",
       coverage: "spanish-latin",
     });
+    expect(shouldRasterizeText(profile, "€ 漢字")).toBe(false);
   });
 
-  it("uses the safe unlisted profile when Spanish support is unavailable", () => {
+  it("keeps automatic bitmap fallback only for the safe unlisted profile", () => {
     const profile = resolvePrintProfile({
       id: "generic",
       nombre: "POS",
@@ -1345,7 +1390,11 @@ describe("POS Ticket Bridge", () => {
     });
 
     expect(profile.id).toBe("unlisted-safe");
-    expect(profile).toMatchObject({ encoding: "CP437", codeTable: 0 });
+    expect(profile).toMatchObject({
+      encoding: "CP437",
+      codeTable: 0,
+      unicodeFallback: "auto",
+    });
     expect(shouldRasterizeText(profile, "Caja 1 - total 20")).toBe(false);
     expect(shouldRasterizeText(profile, "José, mañana")).toBe(true);
     expect(shouldRasterizeText(profile, "José, mañana y €")).toBe(true);
@@ -1382,11 +1431,12 @@ describe("POS Ticket Bridge", () => {
     expect(profile).toMatchObject({
       encoding: "CP850",
       codeTable: 2,
+      unicodeFallback: "native",
       coverage: "spanish-latin",
       validation: "confirmed",
     });
     expect(shouldRasterizeText(profile, "José")).toBe(false);
-    expect(shouldRasterizeText(profile, "€")).toBe(true);
+    expect(shouldRasterizeText(profile, "€")).toBe(false);
 
     const profileWithoutLegacyConfirmation = resolvePrintProfile(printer);
     expect(profileWithoutLegacyConfirmation).toMatchObject({
@@ -1397,7 +1447,7 @@ describe("POS Ticket Bridge", () => {
     });
   });
 
-  it("keeps English native for ASCII and falls back for extended characters", () => {
+  it("keeps automatic English profiles native for every character", () => {
     const profile = resolvePrintProfile({
       id: "epson-en",
       nombre: "Epson",
@@ -1413,7 +1463,141 @@ describe("POS Ticket Bridge", () => {
       connection: { vendorId: "0x04b8", productId: "0x0202" },
     });
     expect(shouldRasterizeText(profile, "Cash total 20")).toBe(false);
-    expect(shouldRasterizeText(profile, "José")).toBe(true);
+    expect(shouldRasterizeText(profile, "José")).toBe(false);
+  });
+
+  it("never rasterizes an English test ticket in native mode", async () => {
+    const received: Buffer[] = [];
+    const stages: string[] = [];
+    const server = net.createServer((socket) =>
+      socket.on("data", (chunk) => received.push(Buffer.from(chunk))),
+    );
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("No test port");
+
+    try {
+      await testPrint(
+        {
+          id: "custom-native-en",
+          nombre: "Printer001",
+          tipo: "network",
+          anchoMm: 80,
+          abreCajon: false,
+          enabled: true,
+          printProfile: {
+            language: "en",
+            mode: "custom",
+            custom: {
+              encoding: "CP437",
+              codeTable: 0,
+              unicodeFallback: "native",
+            },
+          },
+          connection: { host: "127.0.0.1", port: address.port },
+        },
+        testPrintTexts("en", "Printer001"),
+        { onEvent: (stage) => stages.push(stage) },
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    const output = Buffer.concat(received);
+    expect(stages).not.toContain("raster_prepare");
+    expect(stages).not.toContain("raster_queued");
+    expect(output.includes(Buffer.from([0x1d, 0x76, 0x30]))).toBe(false);
+    expect(
+      output.includes(
+        iconv.encode(
+          "ASCII: ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,:;!?+-*/\n",
+          "CP437",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      output.includes(
+        iconv.encode("Symbols: ? $ S/ % # @ & / \\ ( ) [ ] { }\n", "CP437"),
+      ),
+    ).toBe(true);
+  });
+
+  it("preserves native ESC/POS font metrics and independent scales in raster", () => {
+    const profile = resolvePrintProfile({
+      id: "raster-metrics",
+      nombre: "Raster",
+      tipo: "network",
+      anchoMm: 80,
+      abreCajon: false,
+      enabled: true,
+      printProfile: {
+        language: "en",
+        mode: "custom",
+        custom: {
+          encoding: "CP437",
+          codeTable: 0,
+          unicodeFallback: "raster",
+        },
+      },
+      connection: { host: "127.0.0.1", port: 9100 },
+    });
+
+    const document = rasterDocument(profile, [
+      {
+        text: "TITLE",
+        align: "center",
+        font: "standard",
+        width: 2,
+        height: 2,
+        bold: true,
+      },
+      { text: "Compact", align: "left", font: "compact" },
+      {
+        text: "Tall",
+        align: "right",
+        font: "compact-tall",
+        width: 2,
+        height: 3,
+      },
+    ]);
+
+    expect(document.height).toBe(165);
+    expect(document.svg).toContain("@font-face");
+    expect(document.svg).toContain("data:font/woff2;base64,");
+    expect(document.svg).toContain("font-family=\"'Roboto Mono', monospace\"");
+    expect(document.svg).toContain('dominant-baseline="central"');
+    expect(document.svg).toContain(
+      'font-size="58" font-weight="650" textLength="120"',
+    );
+    expect(document.svg).toContain(
+      'font-size="20" font-weight="400" textLength="63"',
+    );
+    expect(document.svg).toContain(
+      'font-size="87" font-weight="400" textLength="72"',
+    );
+  });
+
+  it("flushes native text before queuing a raster fallback", async () => {
+    const order: string[] = [];
+    const image = {};
+
+    await queueRasterAfterNative(
+      {
+        flush: async () => {
+          order.push("native");
+        },
+        raster: (queuedImage) => {
+          expect(queuedImage).toBe(image);
+          order.push("raster");
+        },
+      },
+      image,
+    );
+
+    expect(order).toEqual(["native", "raster"]);
   });
 
   it("encodes Spanish natively and preserves full-width dividers after font selection", async () => {
@@ -1472,7 +1656,7 @@ describe("POS Ticket Bridge", () => {
               right: "$ 10.000",
               bold: true,
             },
-            { type: "separator", style: "solid" },
+            { type: "separator", style: "dotted" },
             { type: "cut" },
           ],
         },
@@ -1499,7 +1683,32 @@ describe("POS Ticket Bridge", () => {
     expect(output.includes(Buffer.from([0x1b, 0x4d, 0, 0x1d, 0x21, 0]))).toBe(
       true,
     );
-    expect(output.includes(Buffer.from("-".repeat(48)))).toBe(true);
+    expect(output.includes(Buffer.from([0x1b, 0x4a, 8]))).toBe(true);
+    expect(output.includes(Buffer.from([0x1b, 0x20, 1]))).toBe(false);
+    const divider = Buffer.from(".".repeat(48));
+    const dividerIndex = output.indexOf(divider);
+    expect(dividerIndex).toBeGreaterThan(-1);
+    const finalRowLabel = "1x Torta de Chocolate · Personal";
+    const finalRow = iconv.encode(
+      `${finalRowLabel}${" ".repeat(48 - finalRowLabel.length - 8)}$ 10.000\n`,
+      "CP858",
+    );
+    const finalRowIndex = output.indexOf(finalRow);
+    expect(finalRowIndex).toBeGreaterThan(-1);
+    expect(output.subarray(finalRowIndex - 3, finalRowIndex)).toEqual(
+      Buffer.from([0x1b, 0x33, 18]),
+    );
+    expect(
+      output
+        .subarray(finalRowIndex + finalRow.length, dividerIndex)
+        .includes(Buffer.from([0x1b, 0x4a, 8])),
+    ).toBe(false);
+    expect(
+      output.subarray(
+        dividerIndex + divider.length,
+        dividerIndex + divider.length + 4,
+      ),
+    ).toEqual(Buffer.from([0x0a, 0x1b, 0x4a, 16]));
     // Exercise renderTableRow through the real network transport and ESC/POS encoder.
     for (const label of [
       "1x Combo futbolero",

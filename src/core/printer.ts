@@ -1,4 +1,9 @@
 import { nativeTableRowLines } from "./native-table-row";
+// Vite resolves explicit inline asset imports; eslint-import does not.
+// eslint-disable-next-line import/no-unresolved
+import robotoMonoLatin from "../assets/fonts/RobotoMono-Latin.woff2?inline";
+// eslint-disable-next-line import/no-unresolved
+import robotoMonoLatinExt from "../assets/fonts/RobotoMono-LatinExt.woff2?inline";
 /* eslint-disable @typescript-eslint/no-var-requires */
 import { BrowserWindow } from "electron";
 import {
@@ -15,12 +20,12 @@ import type { PrintJob, Printer } from "./types";
 import { printQueue } from "./print-queue";
 import {
   bluetoothSerialOptions,
+  createBluetoothSerialAdapter,
   resolveBluetoothSerialPath,
 } from "./transports/bluetooth-serial";
 import { createMacOSBluetoothAdapter } from "./transports/macos-bluetooth";
 import { createUsbAdapter } from "./transports/usb";
 const escpos: any = require("@node-escpos/core");
-const SerialAdapter: any = require("@node-escpos/serialport-adapter");
 const NetworkAdapter: any = require("@node-escpos/network-adapter");
 type Hooks = {
   onEvent?: (stage: string, detail?: Record<string, unknown>) => void;
@@ -31,6 +36,10 @@ type WithPrinterOptions = {
 type PrintableImage = {
   size: { width: number; height: number; colors: number };
   pixels: { data: Uint8Array };
+};
+type RasterQueuePrinter = {
+  flush: () => Promise<unknown>;
+  raster: (image: unknown) => unknown;
 };
 const emit = (
   hooks: Hooks,
@@ -59,9 +68,11 @@ async function adapter(printer: Printer, hooks: Hooks) {
       ...(path !== configuredPath ? { configuredPath } : {}),
     });
     if (process.platform !== "darwin")
-      return new SerialAdapter(path, {
-        baudRate: Number(printer.connection.baudRate) || 9600,
-      });
+      return createBluetoothSerialAdapter(
+        path,
+        Number(printer.connection.baudRate) || 9600,
+        hooks,
+      );
     return createMacOSBluetoothAdapter(
       path,
       Number(printer.connection.baudRate) || 9600,
@@ -86,6 +97,36 @@ const selectNativeFont = (printer: FontSelectablePrinter, value: unknown) => {
     // Some ESC/POS implementations expose no requested font. Keep the document
     // printable with its standard native font instead of falling back to a bitmap.
     printer.font("A");
+  }
+};
+type NativeTextPrinter = {
+  text: (content: string) => unknown;
+  raw: (data: Buffer) => unknown;
+  lineSpace: (dots?: number | null) => unknown;
+};
+// Keep a fixed visual gap between native lines. Do not scale it with the font:
+// large text already advances by its own ROM glyph height.
+const nativeLineGap = Buffer.from([0x1b, 0x4a, 8]); // ESC J 8: feed eight dots.
+// A dotted divider uses the low part of a native glyph cell. Compact the LF
+// before it and compensate after it so the visible dots sit between both
+// sections instead of appearing attached to the following text.
+const nativeSeparatorBeforeLineSpace = 18;
+const nativeSeparatorAfterGap = Buffer.from([0x1b, 0x4a, 16]);
+const printNativeText = (
+  printer: NativeTextPrinter,
+  content: string,
+  appendTrailingGap = true,
+) => {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  for (const [index, line] of lines.entries()) {
+    const isCompactSeparatorLead =
+      !appendTrailingGap && index === lines.length - 1;
+    if (isCompactSeparatorLead)
+      printer.lineSpace(nativeSeparatorBeforeLineSpace);
+    printer.text(line);
+    if (isCompactSeparatorLead) printer.lineSpace();
+    if (appendTrailingGap || index < lines.length - 1)
+      printer.raw(nativeLineGap);
   }
 };
 async function loadImage(source: string) {
@@ -219,7 +260,9 @@ type RasterLine = {
   align: "left" | "center" | "right";
   bold?: boolean;
   underline?: boolean;
-  size?: number;
+  font?: "standard" | "compact" | "compact-tall";
+  width?: number;
+  height?: number;
 };
 
 type RasterDocument = {
@@ -228,20 +271,54 @@ type RasterDocument = {
   height: number;
 };
 
-const rasterDocument = (
+const rasterFontMetrics = {
+  // OpenType em boxes include vertical whitespace. These sizes deliberately
+  // exceed the ESC/POS cell height so the visible ink matches ROM Font A/B.
+  standard: { cellWidth: 12, cellHeight: 24, fontSize: 29 },
+  compact: { cellWidth: 9, cellHeight: 17, fontSize: 20 },
+  "compact-tall": { cellWidth: 9, cellHeight: 24, fontSize: 29 },
+} as const;
+
+const rasterFontFaces = `<style>
+@font-face{font-family:'Roboto Mono';font-style:normal;font-weight:400 700;font-display:block;src:url('${robotoMonoLatinExt}') format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:'Roboto Mono';font-style:normal;font-weight:400 700;font-display:block;src:url('${robotoMonoLatin}') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+</style>`;
+
+const rasterScale = (value: unknown) =>
+  Math.min(8, Math.max(1, Number(value) || 1));
+
+export const queueRasterAfterNative = async (
+  printer: RasterQueuePrinter,
+  image: unknown,
+) => {
+  await printer.flush();
+  printer.raster(image);
+};
+
+export const rasterDocument = (
   profile: ResolvedPrintProfile,
   lines: RasterLine[],
 ): RasterDocument => {
   const rendered = lines.flatMap((line) => {
-    const size = Math.min(2, Math.max(1, Number(line.size) || 1));
-    const columns = Math.max(1, Math.floor(profile.columns / size));
+    const font = line.font || "standard";
+    const metrics = rasterFontMetrics[font];
+    const width = rasterScale(line.width);
+    const height = rasterScale(line.height);
+    const columns = Math.max(
+      1,
+      Math.floor(profile.rasterWidth / (metrics.cellWidth * width)),
+    );
     return linesFor(line.text, columns).map((text) => ({
       ...line,
       text,
-      size,
+      font,
+      width,
+      height,
+      metrics,
     }));
   });
-  const lineHeight = (line: (typeof rendered)[number]) => 24 * line.size;
+  const lineHeight = (line: (typeof rendered)[number]) =>
+    Math.max(line.metrics.cellHeight, line.metrics.fontSize) * line.height;
   const height = Math.max(
     24,
     rendered.reduce((total, line) => total + lineHeight(line), 0),
@@ -263,10 +340,11 @@ const rasterDocument = (
             ? "end"
             : "start";
       y += heightForLine;
-      return `<text x="${x}" y="${y - 4}" text-anchor="${anchor}" xml:space="preserve" font-family="monospace" font-size="${20 * line.size}" font-weight="${line.bold ? "700" : "400"}"${line.underline ? ' text-decoration="underline"' : ""}>${escapeXml(line.text)}</text>`;
+      const textWidth = line.text.length * line.metrics.cellWidth * line.width;
+      return `<text x="${x}" y="${y - heightForLine / 2}" dominant-baseline="central" text-anchor="${anchor}" xml:space="preserve" font-family="'Roboto Mono', monospace" font-size="${line.metrics.fontSize * line.height}" font-weight="${line.bold ? "650" : "400"}"${textWidth ? ` textLength="${textWidth}" lengthAdjust="spacingAndGlyphs"` : ""}${line.underline ? ' text-decoration="underline"' : ""}>${line.text ? escapeXml(line.text) : "&#160;"}</text>`;
     })
     .join("");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${profile.rasterWidth}" height="${height}" viewBox="0 0 ${profile.rasterWidth} ${height}"><rect width="100%" height="100%" fill="white"/><g fill="black">${text}</g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${profile.rasterWidth}" height="${height}" viewBox="0 0 ${profile.rasterWidth} ${height}">${rasterFontFaces}<rect width="100%" height="100%" fill="white"/><g fill="black">${text}</g></svg>`;
   return { svg, width: profile.rasterWidth, height };
 };
 
@@ -285,6 +363,9 @@ async function renderRasterDocument(document: RasterDocument) {
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;overflow:hidden;background:white}</style></head><body>${document.svg}</body></html>`;
     await page.loadURL(
       `data:text/html;charset=utf-8,${encodeURIComponent(html)}`,
+    );
+    await page.webContents.executeJavaScript(
+      "document.fonts ? document.fonts.ready.then(() => true) : true",
     );
     const image = await page.webContents.capturePage({
       x: 0,
@@ -324,7 +405,9 @@ async function rasterLines(
     // time. Several generic POS printers accept the beginning of that command
     // but never finish it, leaving the rest of the ticket queued. GS v 0 is the
     // standard raster command and sends this Unicode fallback as one bitmap.
-    printer.raster(escposImage);
+    // Flush native text first because some firmware drops bytes immediately
+    // preceding GS v 0 when both modes arrive in the same transport write.
+    await queueRasterAfterNative(printer, escposImage);
     emit(hooks, "raster_queued", { command: "GS v 0" });
   } catch (error) {
     emit(hooks, "raster_error", {
@@ -339,11 +422,15 @@ async function renderText(
   value: any,
   profile: ResolvedPrintProfile,
   hooks: Hooks,
+  appendTrailingGap = true,
 ) {
   const content = String(value.content || "");
   const alignValue =
     value.align === "center" || value.align === "right" ? value.align : "left";
-  if (shouldRasterizeText(profile, content)) {
+  if (
+    profile.unicodeFallback !== "native" &&
+    shouldRasterizeText(profile, content)
+  ) {
     await rasterLines(
       printer,
       profile,
@@ -353,7 +440,9 @@ async function renderText(
           align: alignValue,
           bold: Boolean(value.bold),
           underline: Boolean(value.underline),
-          size: Number(value.size) || 1,
+          font: value.font,
+          width: Number(value.width) || 1,
+          height: Number(value.height) || 1,
         },
       ],
       hooks,
@@ -369,7 +458,7 @@ async function renderText(
   // using `printer.encode(...)`, selected from the resolved profile above.
   // Sending UTF-8 while ESC t is active is what produced two incorrect glyphs
   // for each accented character on the physical printer.
-  printer.text(content);
+  printNativeText(printer, content, appendTrailingGap);
   printer.style(false, false, 0);
   selectNativeFont(printer, "standard");
   printer.size(1, 1);
@@ -380,10 +469,14 @@ async function renderTableRow(
   value: any,
   profile: ResolvedPrintProfile,
   hooks: Hooks,
+  appendTrailingGap = true,
 ) {
   const left = String(value.left || "");
   const right = String(value.right || "");
-  if (shouldRasterizeText(profile, `${left}${right}`)) {
+  if (
+    profile.unicodeFallback !== "native" &&
+    shouldRasterizeText(profile, `${left}${right}`)
+  ) {
     const leftColumns = Math.floor(profile.columns * 0.65);
     const rightColumns = profile.columns - leftColumns;
     await rasterLines(
@@ -411,12 +504,17 @@ async function renderTableRow(
   selectNativeFont(printer, "standard");
   printer.size(1, 1);
   printer.style(Boolean(value.bold), false, 0);
-  for (const line of nativeTableRowLines(
+  const lines = nativeTableRowLines(
     { left, right, align: value.align },
     profile.columns,
     profile.encoding,
-  )) {
-    printer.text(line);
+  );
+  for (const [index, line] of lines.entries()) {
+    printNativeText(
+      printer,
+      line,
+      appendTrailingGap || index < lines.length - 1,
+    );
   }
   printer.style(false, false, 0);
 }
@@ -427,17 +525,20 @@ async function render(
   profile: ResolvedPrintProfile,
   imageOmitted?: string,
 ) {
-  for (const block of job.blocks || []) {
+  const blocks = job.blocks || [];
+  for (const [blockIndex, block] of blocks.entries()) {
     const value: any = block;
+    const separatorFollows = blocks[blockIndex + 1]?.type === "separator";
     switch (block.type) {
       case "text":
-        await renderText(printer, value, profile, hooks);
+        await renderText(printer, value, profile, hooks, !separatorFollows);
         break;
       case "table-row":
-        await renderTableRow(printer, value, profile, hooks);
+        await renderTableRow(printer, value, profile, hooks, !separatorFollows);
         break;
       case "separator":
         printer.drawLine(value.style === "dotted" ? "." : "-");
+        printer.raw(nativeSeparatorAfterGap);
         break;
       case "feed":
         printer.feed(Number(value.lines) || 1);
@@ -666,12 +767,11 @@ export const testPrint = (
         },
         { type: "separator", style: "solid" },
         { type: "text", content: texts.printer },
-        {
-          type: "text",
-          content: [texts.ascii, texts.spanish, texts.symbols]
-            .filter(Boolean)
-            .join("\n"),
-        },
+        { type: "text", content: texts.ascii },
+        ...(texts.spanish
+          ? [{ type: "text" as const, content: texts.spanish }]
+          : []),
+        { type: "text", content: texts.symbols },
         { type: "text", content: new Date().toLocaleString() },
         { type: "feed", lines: 3 },
         { type: "cut" },

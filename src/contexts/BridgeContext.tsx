@@ -152,7 +152,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   }, [refresh]);
 
   useEffect((): void | (() => void) => {
-    const interval = window.setInterval((): void => { void refreshDiagnostics(); }, 1000);
+    const interval = window.setInterval((): void => {
+      void refreshDiagnostics();
+    }, 1000);
     return (): void => window.clearInterval(interval);
   }, [refreshDiagnostics]);
 

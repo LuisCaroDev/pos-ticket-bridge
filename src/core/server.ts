@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import type { ServerOptions } from "node:https";
 import type { LocalHttpsStatus } from "./local-https-types";
 import {
+  BridgeError,
   errorPayload,
   characterProfileTrialTexts,
   message,
@@ -117,17 +118,29 @@ export function createBridgeServer(
     configured: store.configured(),
     diagnostics,
     printers: await Promise.all(
-      store.get().printers.map(async (printer) => ({
-        ...printer,
-        runtime: {
-          connection: await checkConnection(printer),
-          queue: printQueue.status(printer),
-          printProfile: publicPrintProfile(resolvePrintProfile(printer)),
-          lastTest: lastTests.get(printer.id) || null,
-          lastDiagnostic:
-            diagnostics.find((item) => item.printerId === printer.id) || null,
-        },
-      })),
+      store.get().printers.map(async (printer) => {
+        const lastDiagnostic =
+          diagnostics.find((item) => item.printerId === printer.id) || null;
+        const detectedConnection = await checkConnection(printer);
+        const connection =
+          printer.tipo === "bluetooth" && lastDiagnostic?.status === "error"
+            ? {
+                ok: false,
+                state: "unavailable",
+                message: lastDiagnostic.message || message("operation_failed"),
+              }
+            : detectedConnection;
+        return {
+          ...printer,
+          runtime: {
+            connection,
+            queue: printQueue.status(printer),
+            printProfile: publicPrintProfile(resolvePrintProfile(printer)),
+            lastTest: lastTests.get(printer.id) || null,
+            lastDiagnostic,
+          },
+        };
+      }),
     ),
   });
   const recentDiagnostics = () => diagnostics;
@@ -167,7 +180,12 @@ export function createBridgeServer(
     } catch (error) {
       entry.status = "error";
       entry.message = errorPayload(error);
-      entry.cause = error instanceof Error ? error.message : String(error);
+      entry.cause =
+        error instanceof BridgeError && error.technicalCause
+          ? error.technicalCause
+          : error instanceof Error
+            ? error.message
+            : String(error);
       (error as Error & { diagnostic?: Diagnostic }).diagnostic = entry;
       throw error;
     } finally {

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
+import { BridgeError } from "../../i18n";
 const { Adapter }: any = require("@node-escpos/adapter");
 const { SerialPort }: any = require("serialport");
 
@@ -65,6 +66,42 @@ export const bluetoothSerialOptions = (
  */
 export const resolveBluetoothSerialPath = (path: string) => path;
 
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+/**
+ * Windows error 121 is a connection timeout, not proof that another device
+ * owns the printer. Access-denied/busy errors are the only ones classified as
+ * a local port conflict.
+ */
+export const bluetoothOpenError = (
+  error: unknown,
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+) => {
+  const cause = errorText(error);
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code || "")
+      : "";
+  if (
+    platform === "win32" &&
+    (/\b(?:error code )?121\b/i.test(cause) || /semaphore timeout/i.test(cause))
+  )
+    return new BridgeError("bluetooth_channel_unavailable", { path }, cause);
+  if (
+    /^(?:EACCES|EBUSY)$/i.test(code) ||
+    /access (?:is )?denied|resource busy|port.*busy/i.test(cause)
+  )
+    return new BridgeError("bluetooth_port_busy", { path }, cause);
+  if (
+    /^ENOENT$/i.test(code) ||
+    /cannot find|not found|no such file/i.test(cause)
+  )
+    return new BridgeError("bluetooth_port_not_found", { path }, cause);
+  return new BridgeError("bluetooth_open_failed", { path }, cause);
+};
+
 /**
  * SerialPort's `flush()` is destructive: on macOS it calls tcflush() and
  * discards bytes that have not reached the Bluetooth device yet. The
@@ -78,6 +115,7 @@ export class BluetoothSerialAdapter extends Adapter {
   private readonly keepOpen: boolean;
   private hooks: BluetoothSerialHooks;
   private openState = false;
+  private readonly path: string;
 
   constructor(
     path: string,
@@ -88,6 +126,7 @@ export class BluetoothSerialAdapter extends Adapter {
     keepOpen = false,
   ) {
     super();
+    this.path = path;
     this.portOptions = { path, ...options, autoOpen: false };
     this.Port = Port;
     this.keepOpen = keepOpen;
@@ -119,7 +158,13 @@ export class BluetoothSerialAdapter extends Adapter {
     }
     device.open((error) => {
       if (error) {
-        callback?.(error);
+        const classified = bluetoothOpenError(error, this.path, this.platform);
+        emit(this.hooks, "adapter_open_error", {
+          path: this.path,
+          code: classified.code,
+          cause: classified.technicalCause || error.message,
+        });
+        callback?.(classified);
         return;
       }
       this.openState = true;

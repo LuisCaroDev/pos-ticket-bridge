@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   filterProfilesForPrintLanguage,
   hasUnsavedCustomProfile,
+  profileCompatibilityWarning,
   profileDisplayName,
 } from "../src/components/app/PrinterEditorPanel";
 
@@ -73,6 +74,7 @@ describe("App", () => {
     vi.clearAllMocks();
     bridge.status.mockResolvedValue(status());
     bridge.printerProfiles.mockResolvedValue({ profiles: [] });
+    bridge.discover.mockResolvedValue({ items: [], notes: [] });
     bridge.createPrinter.mockResolvedValue({});
     bridge.updatePrinter.mockResolvedValue({});
     bridge.saveLocalProfile.mockImplementation(async (input) => {
@@ -118,8 +120,23 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Agregar" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Red \/ Ethernet \/ Wi/ }),
+    );
+    fireEvent.change(screen.getByLabelText("IP / host"), {
+      target: { value: "192.168.1.50" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Usar esta conexión" }));
 
     expect(screen.getByText("80 mm")).toBeTruthy();
+    expect(
+      screen.getByText("Algunos caracteres podrían verse diferentes."),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: "Este perfil combina texto nativo y bitmap para los caracteres no cubiertos.",
+      }),
+    ).toBeTruthy();
   });
 
   it("opens a detected result as a draft in the printer drawer", async () => {
@@ -146,22 +163,39 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => expect(bridge.status).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "Detectar USB" }));
+    expect(screen.queryByText("Detección de impresoras")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Agregar" }));
+    fireEvent.click(screen.getByRole("button", { name: /^USB/ }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Usar este resultado" }),
     );
 
-    expect(screen.getByText("Agregar impresora")).toBeTruthy();
-    expect(screen.getByRole("status")).toBeTruthy();
-    expect(screen.getAllByDisplayValue("POS USB")).toHaveLength(2);
+    expect(screen.getByText("Configurar impresora · Paso 2 de 2")).toBeTruthy();
+    expect(screen.getByDisplayValue("POS USB")).toBeTruthy();
+    const connectionCard = screen
+      .getByText("Identificadores técnicos")
+      .closest('[data-slot="card"]');
+    if (!connectionCard) throw new Error("Connection summary did not render");
+    expect(
+      within(connectionCard).queryByRole("button", {
+        name: "Probar configuración",
+      }),
+    ).toBeNull();
     expect(document.querySelector('[data-slot="sheet-overlay"]')).toBeNull();
     expect(
       document.querySelector('[data-slot="resizable-handle"]'),
     ).not.toBeNull();
     expect(bridge.createPrinter).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Probar sin guardar" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Probar configuración" }),
+    );
     await waitFor(() => expect(bridge.testPrinter).toHaveBeenCalled());
+    expect(
+      await screen.findByText(
+        "Ticket de prueba enviado. Puedes guardar la impresora cuando estés conforme.",
+      ),
+    ).toBeTruthy();
     expect(bridge.testPrinter).toHaveBeenCalledWith(
       expect.objectContaining({ nombre: "POS USB", tipo: "usb" }),
       expect.objectContaining({
@@ -176,6 +210,13 @@ describe("App", () => {
 
     await waitFor(() => expect(bridge.status).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: "Agregar" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Red \/ Ethernet \/ Wi/ }),
+    );
+    fireEvent.change(screen.getByLabelText("IP / host"), {
+      target: { value: "192.168.1.50" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Usar esta conexión" }));
     const editor = document.querySelector('[data-slot="printer-editor-panel"]');
     if (!editor) throw new Error("Printer editor did not open");
     fireEvent.change(within(editor).getAllByRole("textbox")[0], {
@@ -185,7 +226,7 @@ describe("App", () => {
 
     expect(screen.getByText("Descartar cambios sin guardar")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Seguir editando" }));
-    expect(screen.getByText("Agregar impresora")).toBeTruthy();
+    expect(screen.getByText("Configurar impresora · Paso 2 de 2")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     fireEvent.click(screen.getByRole("button", { name: "Descartar cambios" }));
     await waitFor(() =>
@@ -231,6 +272,149 @@ describe("App", () => {
       expect.objectContaining({ id: "caja-1", nombre: "Caja central" }),
     );
     expect(bridge.createPrinter).not.toHaveBeenCalled();
+  });
+
+  it("keeps the saved connection when change connection is abandoned", async () => {
+    bridge.status.mockResolvedValue(
+      status([
+        {
+          id: "caja-1",
+          nombre: "Caja 1",
+          tipo: "network",
+          anchoMm: 80,
+          printProfile: {
+            language: "es",
+            mode: "auto",
+            profileId: "unlisted-safe",
+          },
+          abreCajon: false,
+          enabled: true,
+          connection: { host: "192.168.1.10", port: 9100 },
+        },
+      ]),
+    );
+    const { App } = await import("../src/App");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    expect(screen.getAllByText("192.168.1.10:9100").length).toBeGreaterThan(1);
+    expect(screen.queryByLabelText("IP / host")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar conexión" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Bluetooth \/ serialUsa/ }),
+    );
+    fireEvent.change(screen.getByLabelText("Puerto / path"), {
+      target: { value: "COM9" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Volver" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Conservar conexión actual" }),
+    );
+
+    expect(screen.getAllByText("192.168.1.10:9100").length).toBeGreaterThan(1);
+    expect(bridge.updatePrinter).not.toHaveBeenCalled();
+  });
+
+  it("applies only the new connection and allows saving it without a test", async () => {
+    bridge.status.mockResolvedValue(
+      status([
+        {
+          id: "caja-1",
+          nombre: "Caja 1",
+          tipo: "network",
+          anchoMm: 58,
+          printProfile: {
+            language: "es",
+            mode: "auto",
+            profileId: "unlisted-safe",
+          },
+          abreCajon: true,
+          enabled: true,
+          connection: { host: "192.168.1.10", port: 9100 },
+        },
+      ]),
+    );
+    const { App } = await import("../src/App");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar conexión" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Red \/ Ethernet \/ Wi/ }),
+    );
+    fireEvent.change(screen.getByLabelText("IP / host"), {
+      target: { value: "10.0.0.25" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Usar esta conexión" }));
+
+    expect(screen.getByDisplayValue("Caja 1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Guardar impresora" }));
+
+    await waitFor(() => expect(bridge.updatePrinter).toHaveBeenCalled());
+    expect(bridge.updatePrinter).toHaveBeenCalledWith(
+      "caja-1",
+      expect.objectContaining({
+        nombre: "Caja 1",
+        anchoMm: 58,
+        abreCajon: true,
+        tipo: "network",
+        connection: { host: "10.0.0.25", port: 9100 },
+      }),
+    );
+    expect(bridge.testPrinter).not.toHaveBeenCalled();
+  });
+
+  it("tests the complete printer configuration outside the connection summary", async () => {
+    bridge.status.mockResolvedValue(
+      status([
+        {
+          id: "caja-1",
+          nombre: "Caja 1",
+          tipo: "network",
+          anchoMm: 80,
+          printProfile: {
+            language: "es",
+            mode: "auto",
+            profileId: "unlisted-safe",
+          },
+          abreCajon: false,
+          enabled: true,
+          connection: { host: "192.168.1.10", port: 9100 },
+        },
+      ]),
+    );
+    const { App } = await import("../src/App");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const connectionCard = screen
+      .getByText("Identificadores técnicos")
+      .closest('[data-slot="card"]');
+    if (!connectionCard) throw new Error("Connection summary did not render");
+    expect(
+      within(connectionCard).queryByRole("button", {
+        name: "Probar configuración",
+      }),
+    ).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Probar configuración" }),
+    );
+    await waitFor(() => expect(bridge.testPrinter).toHaveBeenCalled());
+    expect(bridge.testPrinter).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nombre: "Caja 1",
+        tipo: "network",
+        anchoMm: 80,
+        printProfile: expect.objectContaining({
+          language: "es",
+          mode: "auto",
+          profileId: "unlisted-safe",
+        }),
+      }),
+      expect.any(Object),
+    );
   });
 
   it("imports a shared profile from the clipboard", async () => {
@@ -437,8 +621,20 @@ describe("App", () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    expect(
+      screen.getByText("9600 baudios · CP437 · Tabla 0 · Unicode auto"),
+    ).toBeTruthy();
+    const advancedDetails = screen
+      .getByText("Opciones avanzadas de impresión")
+      .closest("details");
+    if (!advancedDetails) throw new Error("Advanced printing did not render");
+    expect(advancedDetails.open).toBe(false);
     fireEvent.click(screen.getByText("Opciones avanzadas de impresión"));
 
+    expect(advancedDetails.open).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "Crear perfil personalizado" }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("button", {
         name: /Velocidad de conexión por Bluetooth en baudios/,
@@ -646,6 +842,70 @@ describe("App", () => {
     ).toBe(true);
   });
 
+  it("shows profile warnings only for risky character configurations", () => {
+    expect(
+      profileCompatibilityWarning({
+        language: "en",
+        mode: "auto",
+        profileId: "unlisted-safe",
+      }),
+    ).toBeUndefined();
+    expect(
+      profileCompatibilityWarning({
+        language: "es",
+        mode: "auto",
+        profileId: "unlisted-safe",
+      }),
+    ).toBe("mixed-rendering");
+    expect(
+      profileCompatibilityWarning(
+        {
+          language: "es",
+          mode: "auto",
+          profileId: "unverified-native",
+        },
+        { verifiedCoverage: ["ascii"] },
+      ),
+    ).toBe("native-unverified");
+    expect(
+      profileCompatibilityWarning(
+        {
+          language: "es",
+          mode: "auto",
+          profileId: "verified-native",
+        },
+        { verifiedCoverage: ["ascii", "spanish-latin"] },
+      ),
+    ).toBeUndefined();
+    expect(
+      profileCompatibilityWarning({
+        language: "es",
+        mode: "custom",
+        custom: {
+          encoding: "CP858",
+          codeTable: 19,
+          unicodeFallback: "native",
+        },
+      }),
+    ).toBe("custom-unverified");
+    expect(
+      profileCompatibilityWarning({
+        language: "es",
+        mode: "custom",
+        custom: {
+          encoding: "CP858",
+          codeTable: 19,
+          unicodeFallback: "native",
+          confirmation: {
+            confirmedAt: "2026-10-01T00:00:00.000Z",
+            testSetName: "Pruebas recomendadas",
+            candidateId: "CP858-T19",
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
   it("opens a printer's diagnostics from the printer list", async () => {
     bridge.status.mockResolvedValue(
       status(
@@ -833,6 +1093,59 @@ describe("App", () => {
     expect(screen.queryByPlaceholderText("Marca")).toBeNull();
   });
 
+  it("saves raster-only settings on the printer without requiring a reusable profile", async () => {
+    bridge.status.mockResolvedValue(
+      status([
+        {
+          id: "caja-1",
+          nombre: "Caja 1",
+          tipo: "network",
+          anchoMm: 80,
+          printProfile: {
+            language: "es",
+            mode: "custom",
+            custom: {
+              encoding: "CP437",
+              codeTable: 0,
+              unicodeFallback: "raster",
+              automaticUnicodePolicy: "ascii",
+            },
+          },
+          abreCajon: false,
+          enabled: true,
+          connection: { host: "192.168.1.10", port: 9100 },
+        },
+      ]),
+    );
+    const { App } = await import("../src/App");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const editor = document.querySelector('[data-slot="printer-editor-panel"]');
+    if (!editor) throw new Error("Printer editor did not open");
+    fireEvent.change(within(editor).getAllByRole("textbox")[0], {
+      target: { value: "Caja raster" },
+    });
+
+    const savePrinter = screen.getByRole("button", {
+      name: "Guardar impresora",
+    });
+    expect((savePrinter as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(savePrinter);
+
+    await waitFor(() => expect(bridge.updatePrinter).toHaveBeenCalled());
+    expect(bridge.updatePrinter).toHaveBeenCalledWith(
+      "caja-1",
+      expect.objectContaining({
+        printProfile: expect.objectContaining({
+          mode: "custom",
+          custom: expect.objectContaining({ unicodeFallback: "raster" }),
+        }),
+      }),
+    );
+    expect(bridge.saveLocalProfile).not.toHaveBeenCalled();
+  });
+
   it("requires make and model before saving a manual custom profile", async () => {
     bridge.status.mockResolvedValue(
       status([
@@ -883,6 +1196,7 @@ describe("App", () => {
           brand: "ACME",
           model: "TP-80",
           widthMm: 80,
+          values: expect.objectContaining({ unicodeFallback: "auto" }),
         }),
       ),
     );
@@ -932,6 +1246,11 @@ describe("App", () => {
       screen.getByRole("button", { name: "Usar perfil seleccionado" }),
     );
     await waitFor(() => expect(bridge.saveLocalProfile).toHaveBeenCalled());
+    expect(bridge.saveLocalProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        values: expect.objectContaining({ unicodeFallback: "native" }),
+      }),
+    );
     const savePrinter = screen.getByRole("button", {
       name: "Guardar impresora",
     });
@@ -950,6 +1269,7 @@ describe("App", () => {
           custom: expect.objectContaining({
             encoding: "CP437",
             codeTable: 0,
+            unicodeFallback: "native",
             confirmation: expect.objectContaining({ candidateId: "CP437-T0" }),
           }),
         }),

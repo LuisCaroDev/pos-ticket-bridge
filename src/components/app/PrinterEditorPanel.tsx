@@ -9,24 +9,39 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, type FieldPath, type Resolver } from "react-hook-form";
 import {
+  Bluetooth,
+  ChevronRight,
   ClipboardPaste,
   Clipboard,
   CircleHelp,
   Download,
   Loader2,
+  Network,
   Plus,
+  Printer,
   Save,
   ScrollText,
   Share2,
   Settings2,
   Trash2,
+  TriangleAlert,
   Upload,
+  Usb,
   XIcon,
 } from "lucide-react";
 import { type TranslationKey } from "@/i18n";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FormField, FormInfoPanel, FormSection } from "@/components/ui/form";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { FormField, FormSection } from "@/components/ui/form";
 import {
   Field,
   FieldError,
@@ -84,6 +99,11 @@ import { usePrintDiagnostics } from "@/contexts/PrintDiagnosticsContext";
 import { printerFormSchema, printerTransportSchema } from "./form-validation";
 import type { PrinterForm, ProfileValues } from "./types";
 import { CharacterProfileAssistant } from "./CharacterProfileAssistant";
+import {
+  PrinterConnectionFlow,
+  type PrinterEditorStep,
+} from "./PrinterConnectionFlow";
+import { connectionLabel } from "./printer-utils";
 
 const encodingPresets = [
   { encoding: "CP437", codeTable: 0 },
@@ -135,14 +155,13 @@ function AdvancedFieldLabel({
 type PrinterEditorPanelProps = {
   form?: PrinterForm;
   draftSessionId?: string;
-  detected: boolean;
   diagnostics: any[];
   profileCatalog: any;
   isWindows: boolean;
   onClose: () => void;
   onFormChange: (form: PrinterForm) => void;
   onClearDraftDiagnostic: () => void;
-  onTest: () => void;
+  onTest: () => Promise<any | undefined>;
   onRunCharacterProfileTrial: (
     candidate: CharacterProfileCandidate,
   ) => Promise<boolean>;
@@ -236,10 +255,32 @@ export const hasUnsavedCustomProfile = (
   );
 };
 
+export type ProfileCompatibilityWarning =
+  "mixed-rendering" | "native-unverified" | "custom-unverified";
+
+export const profileCompatibilityWarning = (
+  printProfile: PrinterForm["printProfile"],
+  selectedCatalogProfile?: { verifiedCoverage?: string[] },
+): ProfileCompatibilityWarning | undefined => {
+  if (printProfile.mode === "custom")
+    return printProfile.custom?.confirmation ? undefined : "custom-unverified";
+  if (
+    printProfile.language === "es" &&
+    printProfile.profileId === "unlisted-safe"
+  )
+    return "mixed-rendering";
+  if (
+    printProfile.language === "es" &&
+    selectedCatalogProfile &&
+    !selectedCatalogProfile.verifiedCoverage?.includes("spanish-latin")
+  )
+    return "native-unverified";
+  return undefined;
+};
+
 export const PrinterEditorPanel = memo(function PrinterEditorPanel({
   form,
   draftSessionId,
-  detected,
   diagnostics,
   profileCatalog,
   isWindows,
@@ -261,6 +302,9 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
   const { language, tr } = useI18n();
   const wasOpen = useRef(false);
   const hasAttemptedValidation = useRef(false);
+  const [editorStep, setEditorStep] =
+    useState<PrinterEditorStep>("printer-details");
+  const [changingConnection, setChangingConnection] = useState(false);
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
   const [pendingProfileLanguage, setPendingProfileLanguage] = useState<
     PrinterForm["printProfile"]["language"] | undefined
@@ -308,6 +352,8 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
     }
     if (!wasOpen.current) {
       reset(form);
+      setEditorStep(form.id ? "printer-details" : "connection-type");
+      setChangingConnection(false);
       wasOpen.current = true;
     }
   }, [form, reset]);
@@ -315,24 +361,6 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
     onFormUpdate(next);
     reset(next, { keepDefaultValues: true });
     if (hasAttemptedValidation.current) void trigger();
-  };
-  const onConnectionChange = (key: string, value: string | number) => {
-    if (!form) return;
-    onFormChange({
-      ...form,
-      connection: { ...form.connection, [key]: value },
-    });
-  };
-  const onTypeChange = (tipo: PrinterForm["tipo"]) => {
-    if (!form) return;
-    const connection =
-      tipo === "network"
-        ? { host: "", port: 9100 }
-        : tipo === "usb"
-          ? { vendorId: "", productId: "", systemPrinter: "" }
-          : { path: "", baudRate: 9600 };
-    onFormChange({ ...form, tipo, connection });
-    clearErrors("connection" as any);
   };
   const error = (path: string) => {
     let value: unknown = errors;
@@ -346,7 +374,7 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
       ? tr(message as TranslationKey)
       : undefined;
   };
-  const testDraft = () => {
+  const testDraft = async () => {
     if (!form) return;
     const result = printerTransportSchema(isWindows).safeParse(form);
     if (result.success) return onTest();
@@ -430,7 +458,8 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
     return {
       encoding: String(values?.encoding || "CP437"),
       codeTable: Number(values?.codeTable ?? 0),
-      unicodeFallback: "auto",
+      unicodeFallback:
+        form?.printProfile.profileId === "unlisted-safe" ? "auto" : "native",
       automaticUnicodePolicy: values?.nativePolicy || "ascii",
     };
   })();
@@ -438,10 +467,47 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
     form?.printProfile.mode === "custom" && form
       ? form.printProfile.custom || automaticProfileValues
       : automaticProfileValues;
+  const advancedUnicodeSummary =
+    advancedProfileValues.unicodeFallback === "raster"
+      ? tr("unicode_raster_summary")
+      : advancedProfileValues.unicodeFallback === "native"
+        ? tr("unicode_native_summary")
+        : tr("unicode_auto_summary");
+  const advancedPrintingSummary = tr(
+    form?.tipo === "bluetooth"
+      ? "advanced_printing_summary_bluetooth"
+      : "advanced_printing_summary",
+    {
+      baudRate:
+        form?.tipo === "bluetooth" ? form.connection.baudRate || 9600 : 9600,
+      encoding: advancedProfileValues.encoding,
+      codeTable: advancedProfileValues.codeTable,
+      unicodeStrategy: advancedUnicodeSummary,
+    },
+  );
   const customProfileNeedsSaving = hasUnsavedCustomProfile(
     form?.printProfile,
     selectedLocalProfile,
   );
+  const profileWarning = form
+    ? profileCompatibilityWarning(form.printProfile, selectedCatalogProfile)
+    : undefined;
+  const profileWarningText = profileWarning
+    ? {
+        "mixed-rendering": {
+          message: "profile_warning_mixed_rendering" as const,
+          detail: "profile_warning_mixed_rendering_detail" as const,
+        },
+        "native-unverified": {
+          message: "profile_warning_native_unverified" as const,
+          detail: "profile_warning_native_unverified_detail" as const,
+        },
+        "custom-unverified": {
+          message: "profile_warning_custom_unverified" as const,
+          detail: "profile_warning_custom_unverified_detail" as const,
+        },
+      }[profileWarning]
+    : undefined;
   const canEditAdvancedProfile = form?.printProfile.mode === "custom";
 
   const applyAutomaticProfileForLanguage = (
@@ -546,7 +612,7 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
       values: {
         encoding: candidate.encoding,
         codeTable: candidate.codeTable,
-        unicodeFallback: "auto",
+        unicodeFallback: "native",
         automaticUnicodePolicy: "encoding",
         confirmation: {
           confirmedAt: new Date().toISOString(),
@@ -657,7 +723,54 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
       setProfileDeletionTarget(undefined);
   };
 
+  const applyConnection = (candidate: PrinterForm) => {
+    if (!form) return;
+    const creating = !form.id;
+    const next: PrinterForm = {
+      ...form,
+      tipo: candidate.tipo,
+      connection: { ...candidate.connection },
+      ...(creating && !form.nombre.trim() && candidate.nombre
+        ? { nombre: candidate.nombre }
+        : {}),
+      ...(creating && candidate.reportedBrand
+        ? { reportedBrand: candidate.reportedBrand }
+        : {}),
+      ...(creating && candidate.reportedModel
+        ? { reportedModel: candidate.reportedModel }
+        : {}),
+      ...(creating && candidate.printProfile
+        ? { printProfile: candidate.printProfile }
+        : {}),
+    };
+    clearErrors("connection" as FieldPath<PrinterForm>);
+    onClearDraftDiagnostic();
+    onFormChange(next);
+    setChangingConnection(false);
+    setEditorStep("printer-details");
+  };
+
+  const beginConnectionChange = () => {
+    setChangingConnection(true);
+    setEditorStep("connection-type");
+  };
+
   if (!form) return null;
+
+  const ConnectionIcon =
+    form.tipo === "network" ? Network : form.tipo === "usb" ? Usb : Bluetooth;
+  const headerTitle =
+    editorStep === "printer-details"
+      ? form.id
+        ? tr("edit_printer", { name: form.nombre })
+        : tr("configure_printer_step")
+      : changingConnection
+        ? tr("change_connection")
+        : tr("add_printer_connection_step");
+  const headerDescription =
+    editorStep === "printer-details"
+      ? tr("configure_printer_description")
+      : tr("printer_detection_description");
 
   return (
     <aside
@@ -666,13 +779,9 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
       className="relative flex h-full w-full max-w-2xl min-w-0 flex-col bg-popover text-sm text-popover-foreground"
     >
       <header className="shrink-0 border-b px-6 py-5 pr-12">
-        <h2 className="text-lg font-semibold tracking-tight">
-          {form?.id
-            ? tr("edit_printer", { name: form.nombre })
-            : tr("add_printer")}
-        </h2>
+        <h2 className="text-lg font-semibold tracking-tight">{headerTitle}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {tr("check_connection_before_saving")}
+          {headerDescription}
         </p>
       </header>
       <Button
@@ -690,15 +799,22 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
           data-slot="printer-form-body"
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 [scrollbar-gutter:stable]"
         >
-          <div className="flex flex-col gap-6">
-            {detected && (
-              <p
-                role="status"
-                className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-muted-foreground"
-              >
-                {tr("detected_connection_notice")}
-              </p>
-            )}
+          {editorStep !== "printer-details" && (
+            <PrinterConnectionFlow
+              step={editorStep}
+              isWindows={isWindows}
+              changingConnection={changingConnection}
+              onStepChange={setEditorStep}
+              onApply={applyConnection}
+            />
+          )}
+          <div
+            className={
+              editorStep === "printer-details"
+                ? "flex flex-col gap-6"
+                : "hidden"
+            }
+          >
             <FormField>
               {tr("name")}
               <Input
@@ -714,151 +830,41 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
             </FormField>
             <Separator />
             <FormSection title={tr("connection_section")}>
-              <FieldGroup className="grid gap-4 md:grid-cols-3">
-                <FormField>
-                  {tr("type")}
-                  <Select
-                    value={form.tipo}
-                    onValueChange={(value) =>
-                      onTypeChange(value as PrinterForm["tipo"])
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="network">{tr("network")}</SelectItem>
-                        <SelectItem value="usb">USB</SelectItem>
-                        <SelectItem value="bluetooth">
-                          {tr("bluetooth")}
-                        </SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </FormField>
-                {form.tipo === "network" && (
-                  <>
-                    <FormField>
-                      {tr("host")}
-                      <Input
-                        value={String(form.connection.host || "")}
-                        aria-invalid={Boolean(error("connection.host"))}
-                        onChange={(event) =>
-                          onConnectionChange("host", event.target.value)
-                        }
-                      />
-                      {error("connection.host") && (
-                        <p className="text-xs text-destructive">
-                          {error("connection.host")}
-                        </p>
-                      )}
-                    </FormField>
-                    <FormField>
-                      {tr("port")}
-                      <Input
-                        type="number"
-                        value={String(form.connection.port || 9100)}
-                        aria-invalid={Boolean(error("connection.port"))}
-                        onChange={(event) =>
-                          onConnectionChange("port", Number(event.target.value))
-                        }
-                      />
-                      {error("connection.port") && (
-                        <p className="text-xs text-destructive">
-                          {error("connection.port")}
-                        </p>
-                      )}
-                    </FormField>
-                  </>
-                )}
-                {form.tipo === "usb" && (
-                  <>
-                    {!isWindows && (
-                      <>
-                        <FormField>
-                          Vendor ID
-                          <Input
-                            placeholder="0x04b8"
-                            value={String(form.connection.vendorId || "")}
-                            aria-invalid={Boolean(error("connection.vendorId"))}
-                            onChange={(event) =>
-                              onConnectionChange("vendorId", event.target.value)
-                            }
-                          />
-                          {error("connection.vendorId") && (
-                            <p className="text-xs text-destructive">
-                              {error("connection.vendorId")}
-                            </p>
-                          )}
-                        </FormField>
-                        <FormField>
-                          Product ID
-                          <Input
-                            placeholder="0x0202"
-                            value={String(form.connection.productId || "")}
-                            aria-invalid={Boolean(
-                              error("connection.productId"),
-                            )}
-                            onChange={(event) =>
-                              onConnectionChange(
-                                "productId",
-                                event.target.value,
-                              )
-                            }
-                          />
-                          {error("connection.productId") && (
-                            <p className="text-xs text-destructive">
-                              {error("connection.productId")}
-                            </p>
-                          )}
-                        </FormField>
-                      </>
-                    )}
-                    {isWindows && (
-                      <FormField className="md:col-span-2">
-                        {tr("installed_windows_printer")}
-                        <Input
-                          placeholder={tr("windows_printer_placeholder")}
-                          value={String(form.connection.systemPrinter || "")}
-                          aria-invalid={Boolean(
-                            error("connection.systemPrinter"),
-                          )}
-                          onChange={(event) =>
-                            onConnectionChange(
-                              "systemPrinter",
-                              event.target.value,
-                            )
-                          }
-                        />
-                        {error("connection.systemPrinter") && (
-                          <p className="text-xs text-destructive">
-                            {error("connection.systemPrinter")}
-                          </p>
-                        )}
-                      </FormField>
-                    )}
-                  </>
-                )}
-                {form.tipo === "bluetooth" && (
-                  <FormField className="md:col-span-2">
-                    {tr("path")}
-                    <Input
-                      placeholder="COM5"
-                      value={String(form.connection.path || "")}
-                      aria-invalid={Boolean(error("connection.path"))}
-                      onChange={(event) =>
-                        onConnectionChange("path", event.target.value)
-                      }
-                    />
-                    {error("connection.path") && (
-                      <p className="text-xs text-destructive">
-                        {error("connection.path")}
-                      </p>
-                    )}
-                  </FormField>
-                )}
-              </FieldGroup>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <ConnectionIcon className="size-5" aria-hidden="true" />
+                    {form.tipo === "network"
+                      ? tr("network")
+                      : form.tipo === "usb"
+                        ? tr("usb")
+                        : tr("bluetooth")}
+                  </CardTitle>
+                  <CardDescription>{connectionLabel(form)}</CardDescription>
+                  <CardAction>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={beginConnectionChange}
+                    >
+                      {tr("change_connection")}
+                    </Button>
+                  </CardAction>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-xs text-muted-foreground">
+                    <p className="font-medium text-foreground">
+                      {tr("technical_identifiers")}
+                    </p>
+                    <p className="font-mono break-all">
+                      {Object.values(form.connection)
+                        .filter((value) => value !== "" && value !== undefined)
+                        .join(" · ")}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
             </FormSection>
             <Separator />
             <FormSection title={tr("print_profile_section")}>
@@ -1093,35 +1099,49 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
                       {tr("profile_suggested")}
                     </Button>
                   )}
-                {selectedCatalogProfile && (
-                  <FormInfoPanel className="p-3">
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      {selectedCatalogProfile.description?.[language] ||
-                        selectedCatalogProfile.description?.en}
-                    </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="text-xs font-medium text-foreground">
-                        {tr("profile_coverage")}
-                      </span>
-                      <Badge variant="outline">{tr("coverage_ascii")}</Badge>
-                      <Badge variant="outline">
-                        {tr(
-                          selectedCatalogProfile.verifiedCoverage?.includes(
-                            "spanish-latin",
-                          )
-                            ? "coverage_spanish"
-                            : "coverage_bitmap",
-                        )}
-                      </Badge>
-                    </div>
-                  </FormInfoPanel>
+                {profileWarningText && (
+                  <Alert>
+                    <TriangleAlert />
+                    <AlertDescription className="flex items-center gap-1">
+                      <span>{tr(profileWarningText.message)}</span>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={tr(profileWarningText.detail)}
+                            />
+                          }
+                        >
+                          <CircleHelp />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {tr(profileWarningText.detail)}
+                        </TooltipContent>
+                      </Tooltip>
+                    </AlertDescription>
+                  </Alert>
                 )}
               </div>
-              <details className="rounded-lg border p-4">
-                <summary className="cursor-pointer font-semibold">
-                  {tr("advanced_printing")}
+              <Separator />
+              <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-4 py-4 [&::-webkit-details-marker]:hidden">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold">
+                      {tr("advanced_printing")}
+                    </span>
+                    <span className="mt-1 block text-sm font-normal text-muted-foreground group-open:hidden">
+                      {advancedPrintingSummary}
+                    </span>
+                  </span>
+                  <ChevronRight
+                    aria-hidden="true"
+                    className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+                  />
                 </summary>
-                <div className="mt-4 flex flex-col gap-4">
+                <div className="flex flex-col gap-4 pb-4">
                   {form.tipo === "bluetooth" && (
                     <FormField className="md:max-w-xs">
                       <AdvancedFieldLabel help={tr("baud_rate_help")}>
@@ -1367,30 +1387,32 @@ export const PrinterEditorPanel = memo(function PrinterEditorPanel({
           <Button variant="outline" onClick={requestClose}>
             {tr("cancel")}
           </Button>
-          <Button
-            variant="outline"
-            onClick={testDraft}
-            disabled={busy === "test-draft"}
-          >
-            {busy === "test-draft" && (
-              <Loader2 data-icon="inline-start" className="animate-spin" />
-            )}
-            {tr("test_without_saving")}
-          </Button>
-          <Button
-            onClick={() =>
-              void handleSubmit(onSave, () => {
-                hasAttemptedValidation.current = true;
-              })()
-            }
-            disabled={
-              busy === "save" ||
-              customProfileNeedsSaving ||
-              Boolean(form?.id && !isDirty)
-            }
-          >
-            {tr("save_printer")}
-          </Button>
+          {editorStep === "printer-details" && (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => void testDraft()}
+                disabled={busy === "test-draft"}
+              >
+                {busy === "test-draft" ? (
+                  <Loader2 data-icon="inline-start" className="animate-spin" />
+                ) : (
+                  <Printer data-icon="inline-start" />
+                )}
+                {tr("test_printer_configuration")}
+              </Button>
+              <Button
+                onClick={() =>
+                  void handleSubmit(onSave, () => {
+                    hasAttemptedValidation.current = true;
+                  })()
+                }
+                disabled={busy === "save" || Boolean(form?.id && !isDirty)}
+              >
+                {tr("save_printer")}
+              </Button>
+            </>
+          )}
         </div>
       </div>
       <Dialog
